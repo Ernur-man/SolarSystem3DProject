@@ -1,0 +1,10 @@
+[
+ {"name":"Mercury","diameter_km":4879,"mass_kg":3.301e23,"distance_million_km":57.9,"orbital_period_days":88,"rotation_period_days":58.6,"gravity_m_s2":3.7,"moons":0,"facts":["Smallest planet","Extreme temperature range"]},
+ {"name":"Venus","diameter_km":12104,"mass_kg":4.867e24,"distance_million_km":108.2,"orbital_period_days":224.7,"rotation_period_days":243,"gravity_m_s2":8.87,"moons":0,"facts":["Rotates retrograde","Thick carbon dioxide atmosphere"]},
+ {"name":"Earth","diameter_km":12756,"mass_kg":5.972e24,"distance_million_km":149.6,"orbital_period_days":365.25,"rotation_period_days":0.997,"gravity_m_s2":9.81,"moons":1,"facts":["Only known world with life","Liquid water covers most of its surface"]},
+ {"name":"Mars","diameter_km":6792,"mass_kg":6.417e23,"distance_million_km":227.9,"orbital_period_days":687,"rotation_period_days":1.026,"gravity_m_s2":3.71,"moons":2,"facts":["Home to Olympus Mons","Has two small moons"]},
+ {"name":"Jupiter","diameter_km":142984,"mass_kg":1.898e27,"distance_million_km":778.6,"orbital_period_days":4333,"rotation_period_days":0.414,"gravity_m_s2":24.79,"moons":95,"facts":["Largest planet","Great Red Spot is a long-lived storm"]},
+ {"name":"Saturn","diameter_km":120536,"mass_kg":5.683e26,"distance_million_km":1433.5,"orbital_period_days":10759,"rotation_period_days":0.444,"gravity_m_s2":10.44,"moons":146,"facts":["Prominent ring system","Density is lower than liquid water"]},
+ {"name":"Uranus","diameter_km":51118,"mass_kg":8.681e25,"distance_million_km":2872.5,"orbital_period_days":30687,"rotation_period_days":0.718,"gravity_m_s2":8.69,"moons":28,"facts":["Rotates on its side","Atmosphere contains methane"]},
+ {"name":"Neptune","diameter_km":49528,"mass_kg":1.024e26,"distance_million_km":4495.1,"orbital_period_days":60190,"rotation_period_days":0.671,"gravity_m_s2":11.15,"moons":16,"facts":["Most distant major planet","Has very fast winds"]}
+]
