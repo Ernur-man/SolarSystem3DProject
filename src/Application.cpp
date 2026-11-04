@@ -90,6 +90,7 @@ std::string readText(const char *path) {
 }
 
 Application::~Application() {
+    postProcess.release();
     skyTexture.release();
     if (window) {
         ImGui_ImplOpenGL3_Shutdown();
@@ -213,7 +214,7 @@ bool Application::init() {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     sphere.makeSphere(32, 48);
-    lowDetailSphere.makeSphere(12, 18);
+    applyQualitySettings();
     highlightRing.makeOrbit(1.0f);
     if (!shader.load("shaders/planet.vert", "shaders/planet.frag") ||
         !sunShader.load("shaders/planet.vert", "shaders/sun.frag") ||
@@ -239,7 +240,12 @@ bool Application::init() {
         orbitLines.emplace_back();
         orbitLines.back().makeOrbit(body.orbit);
     }
-    return true;
+    glfwGetFramebufferSize(window, &width, &height);
+    return postProcess.initialize(width, height, highQuality ? 1.0f : 0.75f);
+}
+
+void Application::applyQualitySettings() {
+    lowDetailSphere.makeSphere(highQuality ? 12u : 8u, highQuality ? 18u : 12u);
 }
 
 glm::vec3 Application::cameraPosition() const {
@@ -333,6 +339,7 @@ void Application::startMission() {
     lensing = true;
     instancing = false;
     highQuality = true;
+    applyQualitySettings();
     blackHoleEnabled = true;
     help = false;
 }
@@ -505,7 +512,8 @@ void Application::input(float deltaTime) {
     }
     if (q && !lastQDown) {
         highQuality = !highQuality;
-        std::cout << "Quality: " << (highQuality ? "HIGH" : "LOW") << '\n';
+        applyQualitySettings();
+        std::cout << "Quality: " << (highQuality ? "High" : "Low") << '\n';
     }
     if (b && !lastBDown) {
         blackHoleEnabled = !blackHoleEnabled;
@@ -645,6 +653,10 @@ void Application::run() {
             continue;
         }
         input(dt);
+        if (!postProcess.resize(width, height, highQuality ? 1.0f : 0.75f)) {
+            glfwPollEvents();
+            continue;
+        }
         const bool gameplayActive =
             gameState == GameState::Mission || gameState == GameState::FreeExplore;
         if (gameplayActive && !paused && !quizOpen)
@@ -673,9 +685,10 @@ void Application::run() {
         } else if (!freeFly) {
             currentCamera = cameraPosition();
         }
-        glViewport(0, 0, width, height);
-        glClearColor(0.004f, 0.006f, 0.025f, 1);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        if (!postProcess.beginScene()) {
+            glfwPollEvents();
+            continue;
+        }
         const glm::mat4 view = glm::lookAt(currentCamera, cameraTarget, glm::vec3(0, 1, 0));
         const glm::mat4 projection =
             glm::perspective(glm::radians(45.0f), static_cast<float>(width) / height, 0.1f, 100.0f);
@@ -712,6 +725,9 @@ void Application::run() {
         sunShader.set("projection", projection);
         draw(sunBody, true);
 
+        postProcess.endScene();
+        postProcess.composite(bloom, highQuality ? 8 : 4);
+
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
@@ -736,7 +752,7 @@ void Application::run() {
                     MISSION_TARGET_SCORE);
         ImGui::Text("Bloom %s | Lensing %s | Instancing %s", bloom ? "ON" : "OFF",
                     lensing ? "ON" : "OFF", instancing ? "ON" : "OFF");
-        ImGui::Text("Quality %s | Black hole %s | Light %.1f deg", highQuality ? "HIGH" : "LOW",
+        ImGui::Text("Quality: %s | Black hole %s | Light %.1f deg", highQuality ? "High" : "Low",
                     blackHoleEnabled ? "ON" : "OFF", lightAngle * 57.2957795f);
         if (gameState == GameState::Mission)
             ImGui::ProgressBar(threat.getThreatProgress(), ImVec2(-1, 0), "Threat approaching");

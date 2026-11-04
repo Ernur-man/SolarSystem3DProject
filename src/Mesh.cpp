@@ -5,6 +5,12 @@
 #include <vector>
 
 void Mesh::makeSphere(unsigned rings, unsigned sectors) {
+    if (ebo != 0)
+        glDeleteBuffers(1, &ebo);
+    if (vbo != 0)
+        glDeleteBuffers(1, &vbo);
+    if (vao != 0)
+        glDeleteVertexArrays(1, &vao);
     std::vector<float> vertices;
     std::vector<unsigned> indices;
 

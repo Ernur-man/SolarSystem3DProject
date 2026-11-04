@@ -3,6 +3,7 @@
 #include "Mesh.h"
 #include "Texture.h"
 #include "ThreatInterface.h"
+#include "PostProcess.h"
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <cstddef>
@@ -47,6 +48,7 @@ private:
     std::vector<Mesh> orbitLines;
     Mesh highlightRing;
     Texture skyTexture;
+    PostProcess postProcess;
     std::vector<Body> bodies;
     Body sunBody;
     std::vector<QuizQuestion> questions;
@@ -121,4 +123,5 @@ private:
     void saveScreenshot();
     void draw(const Body &body, bool sun = false);
     void drawSky(const glm::mat4 &view, const glm::mat4 &projection);
+    void applyQualitySettings();
 };

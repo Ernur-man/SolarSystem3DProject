@@ -21,8 +21,8 @@ GLFW (Zlib/libpng), GLAD (MIT), GLM (Happy Bunny and MIT), Dear ImGui (MIT), stb
 ## Controls
 
 - `Space`: pause or resume simulation; `1` / `2` / `3`: simulation speed 1x / 5x / 10x.
-- `G`: toggle Bloom HUD state; `L`: toggle Lensing HUD state; `I`: toggle Instancing HUD state.
-- `Q`: toggle high / low sphere detail; `B`: toggle the black-hole HUD state. These are interface placeholders until the corresponding renderer and black-hole modules are connected.
+- `G`: toggle bloom rendering (the HDR and tone-mapping path remains active); `L`: toggle Lensing HUD state; `I`: toggle Instancing HUD state.
+- `Q`: switch High / Low quality. High uses full-resolution HDR, eight blur iterations, and 32 x 48 sphere segments; Low uses 0.75-resolution HDR, four blur iterations, and 8 x 12 sphere segments. `B` toggles the black-hole HUD state.
 - `R`: restart an active or finished mission; `F`: toggle free-fly; `[` / `]`: rotate the Sun light direction.
 - `Esc`: clear selection and smoothly return to the overview; `F12`: save a PNG in `screenshots/`.
 - `F1` or `H`: show or hide the complete controls overlay.
@@ -38,9 +38,9 @@ The window can be resized and safely handles a minimized framebuffer. Team name 
 
 ## Feature status
 
-**Done:** Steps 1–7 and 9–12: orbit line loops; orbit and free-fly cameras; ray-sphere selection; eased fly-to/follow; planet information and quiz; a start screen with Free Explore and Mission; a fallback threat, scoring, terminal states, and restart; movable Sun light; help overlay; PNG screenshots; and OpenGL debug output in debug builds.
+**Done:** Steps 1–7 and 9–12: orbit line loops; orbit and free-fly cameras; ray-sphere selection; eased fly-to/follow; planet information and quiz; a start screen with Free Explore and Mission; a fallback threat, scoring, terminal states, and restart; movable Sun light; help overlay; PNG screenshots; and OpenGL debug output in debug builds. HDR scene rendering, bright-pass plus separable Gaussian bloom, ACES tone mapping, and final sRGB conversion are implemented. `G` enables or disables only the bloom contribution. `Q` switches HDR render scale, blur iterations, and sphere detail.
 
-**Partial:** Step 8's HUD shows Bloom, Lensing, and Instancing toggle state and logs changes, but those switches are placeholders until the renderer modules are connected. `B` similarly changes the black-hole HUD placeholder only; it does not disable the fallback mission threat. Sphere detail toggling is implemented, while high-detail renderer features (HDR/bloom processing, lensing, instancing, rings, and detailed planet surfaces) remain outside this module. Scene sizes and distances are stylized.
+**Partial:** `L` and `I` still change HUD state only; lensing and instancing are not implemented here. `B` changes the black-hole HUD placeholder only; it does not disable the fallback mission threat. Bloom quality toggles and HDR/tone mapping are implemented; lensing, instancing, rings, and detailed planet surfaces remain outside this module. Scene sizes and distances are stylized.
 
 **Missing:** None of steps 7–12 are missing from this gameplay/UI module. The black-hole visual and state machine are a teammate-owned integration and are not part of the fallback threat implementation here.
 
