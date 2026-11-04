@@ -21,20 +21,22 @@ GLFW (Zlib/libpng), GLAD (MIT), GLM (Happy Bunny and MIT), Dear ImGui (MIT), stb
 ## Controls
 
 - `1`, `2`, `3`: simulation speed 1x / 5x / 10x; `Space`: pause
-- `G`: bloom, `L`: lensing, `[` / `]`: orbit view rotation
-- Click a planet name in Mission Control for its basic information; `Back` or `Esc` clears selection
+- `G`: bloom, `L`: lensing
+- Right mouse drag orbits the camera; the wheel zooms. `F` toggles free-fly, `WASD` moves, and `Shift` moves faster.
+- Select a world in Mission Control or click it in the scene to open its information panel and fly to it. `Back` or `Esc` returns to the overview.
+- Start Quiz opens five randomized questions for the selected world; simulation time pauses until the quiz is closed.
 - `F1`: controls overlay
 
 The window can be resized and safely handles a minimized framebuffer. Team name is a placeholder.
 
 ## Data and image provenance
 
-`assets/planets.json` and `assets/quiz.json` contain hand-authored educational facts and quiz questions. Planet measurements are approximate reference values; verify against NASA before formal submission. No texture files are included. To use the optional sky image, place `stars_milky_way.jpg` at `assets/textures/stars_milky_way.jpg`; without it, the procedural starfield is used. Solar System Scope textures are licensed CC BY 4.0 and require attribution: [Solar System Scope Textures](https://www.solarsystemscope.com/textures/). The texture is not downloaded automatically and must not be committed. NASA images may have item-specific usage notes; inspect each asset record before use.
+`assets/planets.json` and `assets/quiz.json` contain educational facts and quiz questions. Planetary values are approximate and checked against NASA's [Planetary Fact Sheet - Metric](https://nssdc.gsfc.nasa.gov/planetary/factsheet/) and [Sun Fact Sheet](https://nssdc.gsfc.nasa.gov/planetary/factsheet/sunfact.html?level=1). The moon counts reflect that fact sheet's March 2025 update. No texture files are included. To use the optional sky image, place `stars_milky_way.jpg` at `assets/textures/stars_milky_way.jpg`; without it, the procedural starfield is used. Solar System Scope textures are licensed CC BY 4.0 and require attribution: [Solar System Scope Textures](https://www.solarsystemscope.com/textures/). The texture is not downloaded automatically and must not be committed.
 
 ## Feature status
 
-**Done:** OpenGL 3.3 window, procedural shaded Sun and eight colored planets, animated stylized orbits, resizing/minimize handling, speed and pause controls, basic ImGui planet list, console shader diagnostics, separate GLSL files, procedural starfield sky background with an optional equirectangular sRGB texture.
+**Done:** Orbit line loops; orbit and free-fly cameras; click ray-sphere selection with a highlight ring; eased fly-to and follow; Sun and all planet information from JSON with missing-field warnings; five-question randomized quizzes with feedback and score; simulation pauses during quizzes.
 
-**Partial:** Quality toggle is absent; planet info is abbreviated; quiz window does not yet run rounds; orbit lines, selection by ray-picking, smooth follow camera, planet textures, Sun corona, HDR framebuffer/bloom passes, lensing framebuffer composition, black hole event, mission scoring, screenshot output and game restart are not implemented. Bloom/lensing keys currently change HUD state only. The post shader demonstrates equations but is not connected to a post-process pass. Instancing, rings, Earth clouds/night lights/atmosphere, movable light, FPS call counts, GL debug callback and screenshot support are missing. These gaps mean this is a compilable starting demo, not a complete implementation of the assignment.
+**Partial:** The user interface and data are functional but intentionally simple; planet sizes and orbital distances in the rendered scene are stylized. Quality controls, planet surface textures, Sun corona, HDR framebuffer/bloom passes, lensing composition, black hole event/state machine, mission scoring, screenshot output, restart, instancing, rings, Earth clouds/night lights/atmosphere, movable light, FPS call counts, and GL debug callback remain unimplemented. Bloom/lensing keys currently change HUD state only. The post shader demonstrates equations but is not connected to a post-process pass.
 
 Build depends on fetching upstream repositories and has not been verified in this environment.

@@ -5,7 +5,7 @@
 #include <sstream>
 
 namespace {
-std::string readFile(const std::string& path) {
+std::string readFile(const std::string &path) {
     std::ifstream file(path);
     if (!file) {
         std::cerr << "Shader file missing: " << path << '\n';
@@ -16,18 +16,18 @@ std::string readFile(const std::string& path) {
     contents << file.rdbuf();
     return contents.str();
 }
-}
+} // namespace
 
-bool Shader::load(const std::string& vertexPath, const std::string& fragmentPath) {
+bool Shader::load(const std::string &vertexPath, const std::string &fragmentPath) {
     const std::string vertexSource = readFile(vertexPath);
     const std::string fragmentSource = readFile(fragmentPath);
     if (vertexSource.empty() || fragmentSource.empty()) {
         return false;
     }
 
-    const auto compile = [](GLenum type, const std::string& source, const std::string& file) {
+    const auto compile = [](GLenum type, const std::string &source, const std::string &file) {
         const GLuint shader = glCreateShader(type);
-        const char* sourcePointer = source.c_str();
+        const char *sourcePointer = source.c_str();
         glShaderSource(shader, 1, &sourcePointer, nullptr);
         glCompileShader(shader);
 
@@ -65,7 +65,8 @@ bool Shader::load(const std::string& vertexPath, const std::string& fragmentPath
         glGetProgramiv(id, GL_INFO_LOG_LENGTH, &logLength);
         std::string log(static_cast<size_t>(logLength), '\0');
         glGetProgramInfoLog(id, logLength, nullptr, log.data());
-        std::cerr << "Shader link error [" << vertexPath << ", " << fragmentPath << "]:\n" << log << '\n';
+        std::cerr << "Shader link error [" << vertexPath << ", " << fragmentPath << "]:\n"
+                  << log << '\n';
         glDeleteProgram(id);
         id = 0;
         return false;
@@ -73,14 +74,18 @@ bool Shader::load(const std::string& vertexPath, const std::string& fragmentPath
     return true;
 }
 
-void Shader::set(const char* name, const glm::mat4& value) const {
+void Shader::set(const char *name, const glm::mat4 &value) const {
     glUniformMatrix4fv(glGetUniformLocation(id, name), 1, GL_FALSE, &value[0][0]);
 }
 
-void Shader::set(const char* name, const glm::vec3& value) const {
+void Shader::set(const char *name, const glm::vec3 &value) const {
     glUniform3fv(glGetUniformLocation(id, name), 1, &value[0]);
 }
 
-void Shader::set(const char* name, float value) const {
+void Shader::set(const char *name, float value) const {
     glUniform1f(glGetUniformLocation(id, name), value);
+}
+
+void Shader::set(const char *name, int value) const {
+    glUniform1i(glGetUniformLocation(id, name), value);
 }
