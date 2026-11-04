@@ -5,10 +5,23 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <glm/gtc/matrix_transform.hpp>
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <random>
 #include <regex>
 #include <sstream>
@@ -22,6 +35,14 @@ float scrollDelta = 0.0f;
 void scrollCallback(GLFWwindow *, double, double y) {
     scrollDelta += static_cast<float>(y);
 }
+
+#ifndef NDEBUG
+void APIENTRY debugMessageCallback(GLenum, GLenum type, GLuint id, GLenum severity, GLsizei,
+                                   const GLchar *message, const void *) {
+    std::cerr << "OpenGL debug message (type " << type << ", severity " << severity << ", id " << id
+              << "): " << (message ? message : "(no message)") << '\n';
+}
+#endif
 
 std::string field(const std::string &object, const char *key) {
     const std::regex pattern(std::string("\\\"") + key + "\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"");
@@ -66,7 +87,7 @@ std::string readText(const char *path) {
     contents << file.rdbuf();
     return contents.str();
 }
-} // namespace
+}
 
 Application::~Application() {
     skyTexture.release();
@@ -91,9 +112,8 @@ bool Application::loadData() {
     }
     for (Body &body : bodies) {
         const auto found =
-            std::find_if(planetObjects.begin(), planetObjects.end(), [&](const std::string &item) {
-                return field(item, "name") == body.name;
-            });
+            std::find_if(planetObjects.begin(), planetObjects.end(),
+                         [&](const std::string &item) { return field(item, "name") == body.name; });
         if (found == planetObjects.end()) {
             std::cerr << "Warning: no JSON record for " << body.name << '\n';
             continue;
@@ -112,9 +132,8 @@ bool Application::loadData() {
         body.facts = stringArray(item, "facts");
     }
     const auto sun =
-        std::find_if(planetObjects.begin(), planetObjects.end(), [](const std::string &item) {
-            return field(item, "name") == "Sun";
-        });
+        std::find_if(planetObjects.begin(), planetObjects.end(),
+                     [](const std::string &item) { return field(item, "name") == "Sun"; });
     if (sun == planetObjects.end()) {
         std::cerr << "Warning: no JSON record for Sun\n";
         return false;
@@ -159,7 +178,7 @@ bool Application::loadData() {
                 uniqueQuestions.push_back(q.question);
         std::sort(uniqueQuestions.begin(), uniqueQuestions.end());
         const auto uniqueEnd = std::unique(uniqueQuestions.begin(), uniqueQuestions.end());
-        if (static_cast<size_t>(std::distance(uniqueQuestions.begin(), uniqueEnd)) < 6)
+        if (static_cast<std::size_t>(std::distance(uniqueQuestions.begin(), uniqueEnd)) < 6)
             std::cerr << "Warning: fewer than 6 unique quiz questions for " << name << '\n';
     }
     return true;
@@ -180,9 +199,21 @@ bool Application::init() {
     glfwSetScrollCallback(window, scrollCallback);
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
         return false;
+#ifndef NDEBUG
+    if ((GLAD_GL_VERSION_4_3 || glfwExtensionSupported("GL_KHR_debug")) &&
+        glDebugMessageCallback != nullptr) {
+        glEnable(GL_DEBUG_OUTPUT);
+        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+        glDebugMessageCallback(debugMessageCallback, nullptr);
+        std::cout << "OpenGL debug output callback enabled.\n";
+    } else {
+        std::cerr << "OpenGL debug output is unavailable on this context.\n";
+    }
+#endif
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     sphere.makeSphere(32, 48);
+    lowDetailSphere.makeSphere(12, 18);
     highlightRing.makeOrbit(1.0f);
     if (!shader.load("shaders/planet.vert", "shaders/planet.frag") ||
         !sunShader.load("shaders/planet.vert", "shaders/sun.frag") ||
@@ -220,7 +251,7 @@ glm::vec3 Application::cameraPosition() const {
 glm::vec3 Application::bodyPosition(int index, float time) const {
     if (index == 8 || index < 0)
         return glm::vec3(0);
-    const Body &body = bodies[static_cast<size_t>(index)];
+    const Body &body = bodies[static_cast<std::size_t>(index)];
     const float yearDays = static_cast<float>(body.orbitalDays / 365.256);
     const float period = ORBIT_BASE_SECONDS * std::pow(yearDays, ORBIT_COMPRESSION_EXPONENT);
     const float angle = time * 6.2831853f / period;
@@ -234,6 +265,7 @@ void Application::selectBody(int index) {
     if (fromOverview)
         overviewDistance = distance;
     selected = index;
+    recordVisit(index);
     startCamera = currentCamera;
     startTarget = cameraTarget;
     if (fromOverview)
@@ -247,9 +279,10 @@ void Application::selectBody(int index) {
 
 void Application::beginQuiz() {
     quizRound.clear();
-    std::vector<size_t> candidates;
-    const std::string name = selected == 8 ? "Sun" : bodies[static_cast<size_t>(selected)].name;
-    for (size_t i = 0; i < questions.size(); ++i)
+    std::vector<std::size_t> candidates;
+    const std::string name =
+        selected == 8 ? "Sun" : bodies[static_cast<std::size_t>(selected)].name;
+    for (std::size_t i = 0; i < questions.size(); ++i)
         if (questions[i].planet == name)
             candidates.push_back(i);
     std::mt19937 random(std::random_device{}());
@@ -267,6 +300,127 @@ void Application::beginQuiz() {
     quizOpen = true;
 }
 
+void Application::startMission() {
+    gameState = GameState::Mission;
+    missionScore = 0;
+    visitedBodies.fill(false);
+    threat.reset();
+    threatSpeedMultiplier = 1.0f;
+    simTime = 0.0f;
+    speed = 1;
+    paused = false;
+    selected = -1;
+    yaw = 0.0f;
+    pitch = 0.25f;
+    distance = 22.0f;
+    overviewDistance = distance;
+    currentCamera = glm::vec3(0, 0, 22);
+    cameraTarget = glm::vec3(0);
+    startCamera = currentCamera;
+    startTarget = cameraTarget;
+    flyCameraOffset = glm::vec3(0, 3, 7);
+    freeForward = glm::vec3(0, 0, -1);
+    flying = false;
+    freeFly = false;
+    quizOpen = false;
+    quizAnswered = false;
+    quizFinished = false;
+    quizQuestionIndex = 0;
+    quizScore = 0;
+    quizChoice = -1;
+    lightAngle = 0.0f;
+    bloom = true;
+    lensing = true;
+    instancing = false;
+    highQuality = true;
+    blackHoleEnabled = true;
+    help = false;
+}
+
+void Application::startFreeExplore() {
+    startMission();
+    gameState = GameState::FreeExplore;
+}
+
+void Application::updateMission(float deltaTime) {
+    if (gameState != GameState::Mission)
+        return;
+    threat.update(deltaTime);
+    if (threat.isSunSwallowed()) {
+        gameState = GameState::Lost;
+        quizOpen = false;
+        paused = true;
+    }
+}
+
+void Application::recordVisit(int index) {
+    if (gameState != GameState::Mission || index < 0 ||
+        index >= static_cast<int>(visitedBodies.size()))
+        return;
+    const std::size_t bodyIndex = static_cast<std::size_t>(index);
+    if (!visitedBodies[bodyIndex]) {
+        visitedBodies[bodyIndex] = true;
+        missionScore += 5;
+        if (missionScore >= MISSION_TARGET_SCORE) {
+            gameState = GameState::Won;
+            quizOpen = false;
+            paused = true;
+        }
+    }
+}
+
+void Application::recordQuizAnswer(bool correct) {
+    if (gameState != GameState::Mission)
+        return;
+    if (correct) {
+        missionScore += 10;
+        threatSpeedMultiplier = std::max(0.25f, threatSpeedMultiplier * 0.8f);
+    } else {
+        threatSpeedMultiplier = std::min(4.0f, threatSpeedMultiplier * 1.25f);
+    }
+    threat.setThreatSpeedMultiplier(threatSpeedMultiplier);
+    if (missionScore >= MISSION_TARGET_SCORE) {
+        gameState = GameState::Won;
+        quizOpen = false;
+        paused = true;
+    }
+}
+
+void Application::saveScreenshot() {
+    std::error_code error;
+    std::filesystem::create_directories("screenshots", error);
+    if (error) {
+        std::cerr << "Could not create screenshots directory: " << error.message() << '\n';
+        return;
+    }
+    const std::string path = "screenshots/solar_system_" +
+                             std::to_string(static_cast<long long>(std::time(nullptr))) + "_" +
+                             std::to_string(screenshotIndex++) + ".png";
+    const std::size_t rowBytes = static_cast<std::size_t>(width) * 4;
+    std::vector<unsigned char> pixels(rowBytes * static_cast<std::size_t>(height));
+    GLint oldPackAlignment = 4;
+    GLint oldReadBuffer = GL_BACK;
+    glGetIntegerv(GL_PACK_ALIGNMENT, &oldPackAlignment);
+    glGetIntegerv(GL_READ_BUFFER, &oldReadBuffer);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadBuffer(GL_BACK);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    glPixelStorei(GL_PACK_ALIGNMENT, oldPackAlignment);
+    glReadBuffer(static_cast<GLenum>(oldReadBuffer));
+    for (int row = 0; row < height / 2; ++row) {
+        const std::size_t top = static_cast<std::size_t>(row) * rowBytes;
+        const std::size_t bottom = static_cast<std::size_t>(height - row - 1) * rowBytes;
+        std::swap_ranges(pixels.begin() + static_cast<std::ptrdiff_t>(top),
+                         pixels.begin() + static_cast<std::ptrdiff_t>(top + rowBytes),
+                         pixels.begin() + static_cast<std::ptrdiff_t>(bottom));
+    }
+    if (stbi_write_png(path.c_str(), width, height, 4, pixels.data(), static_cast<int>(rowBytes))) {
+        std::cout << "Screenshot saved: " << path << '\n';
+    } else {
+        std::cerr << "Could not save screenshot: " << path << '\n';
+    }
+}
+
 void Application::draw(const Body &body, bool sun) {
     const int index = sun ? 8 : static_cast<int>(&body - bodies.data());
     const glm::vec3 position = bodyPosition(index, simTime);
@@ -281,11 +435,13 @@ void Application::draw(const Body &body, bool sun) {
         activeShader.set("time", simTime);
     else {
         activeShader.set("color", body.color);
-        activeShader.set("lightPos", glm::vec3(0));
+        const glm::vec3 lightPosition(20.0f * (std::cos(lightAngle) - 1.0f), 0.0f,
+                                      20.0f * std::sin(lightAngle));
+        activeShader.set("lightPos", lightPosition);
         activeShader.set("cameraPos", currentCamera);
         activeShader.set("emissive", 0.0f);
     }
-    sphere.draw();
+    (highQuality ? sphere : lowDetailSphere).draw();
 }
 
 void Application::drawSky(const glm::mat4 &view, const glm::mat4 &projection) {
@@ -326,19 +482,60 @@ void Application::input(float deltaTime) {
         speed = 5;
     if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS)
         speed = 10;
-    static bool gWasDown = false, lWasDown = false, f1WasDown = false;
     const bool g = glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS;
     const bool l = glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS;
+    const bool i = glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS;
+    const bool q = glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS;
+    const bool b = glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS;
     const bool f1 = glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS;
-    if (g && !gWasDown)
+    const bool h = glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS;
+    const bool r = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
+    const bool f12 = glfwGetKey(window, GLFW_KEY_F12) == GLFW_PRESS;
+    if (g && !lastGDown) {
         bloom = !bloom;
-    if (l && !lWasDown)
+        std::cout << "Bloom: " << (bloom ? "ON" : "OFF") << '\n';
+    }
+    if (l && !lastLDown) {
         lensing = !lensing;
-    if (f1 && !f1WasDown)
+        std::cout << "Lensing: " << (lensing ? "ON" : "OFF") << '\n';
+    }
+    if (i && !lastIDown) {
+        instancing = !instancing;
+        std::cout << "Instancing: " << (instancing ? "ON" : "OFF") << '\n';
+    }
+    if (q && !lastQDown) {
+        highQuality = !highQuality;
+        std::cout << "Quality: " << (highQuality ? "HIGH" : "LOW") << '\n';
+    }
+    if (b && !lastBDown) {
+        blackHoleEnabled = !blackHoleEnabled;
+        std::cout << "Black hole state: " << (blackHoleEnabled ? "ON" : "OFF") << '\n';
+    }
+    if ((f1 && !lastF1Down) || (h && !lastHDown))
         help = !help;
-    gWasDown = g;
-    lWasDown = l;
-    f1WasDown = f1;
+    if (r && !lastRDown &&
+        (gameState == GameState::Mission || gameState == GameState::Won ||
+         gameState == GameState::Lost))
+        startMission();
+    if (f12 && !lastF12Down)
+        screenshotRequested = true;
+    lastGDown = g;
+    lastLDown = l;
+    lastIDown = i;
+    lastQDown = q;
+    lastBDown = b;
+    lastF1Down = f1;
+    lastHDown = h;
+    lastRDown = r;
+    lastF12Down = f12;
+
+    const bool leftBracket = glfwGetKey(window, GLFW_KEY_LEFT_BRACKET) == GLFW_PRESS;
+    const bool rightBracket = glfwGetKey(window, GLFW_KEY_RIGHT_BRACKET) == GLFW_PRESS;
+    if (leftBracket)
+        lightAngle -= deltaTime * 0.8f;
+    if (rightBracket)
+        lightAngle += deltaTime * 0.8f;
+    lightAngle = std::fmod(lightAngle + 6.2831853f, 6.2831853f);
 
     const bool f = glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS;
     if (f && !lastFDown) {
@@ -394,7 +591,9 @@ void Application::input(float deltaTime) {
         cameraTarget = currentCamera + freeForward;
     }
     const bool left = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-    if (left && !lastLeftDown && !overUi && !quizOpen) {
+    const bool gameplayActive =
+        gameState == GameState::Mission || gameState == GameState::FreeExplore;
+    if (left && !lastLeftDown && !overUi && !quizOpen && gameplayActive) {
         int windowWidth = 1, windowHeight = 1;
         glfwGetWindowSize(window, &windowWidth, &windowHeight);
         const float ndcX = 2.0f * static_cast<float>(x) / static_cast<float>(windowWidth) - 1.0f;
@@ -413,7 +612,7 @@ void Application::input(float deltaTime) {
         int hit = -1;
         for (int i = 0; i <= 8; ++i) {
             const glm::vec3 center = bodyPosition(i, simTime);
-            const float radius = i == 8 ? 1.25f : bodies[static_cast<size_t>(i)].radius;
+            const float radius = i == 8 ? 1.25f : bodies[static_cast<std::size_t>(i)].radius;
             const glm::vec3 oc = origin - center;
             const float b = glm::dot(oc, ray);
             const float c = glm::dot(oc, oc) - radius * radius;
@@ -446,8 +645,11 @@ void Application::run() {
             continue;
         }
         input(dt);
-        if (!paused && !quizOpen)
+        const bool gameplayActive =
+            gameState == GameState::Mission || gameState == GameState::FreeExplore;
+        if (gameplayActive && !paused && !quizOpen)
             simTime += dt * static_cast<float>(speed);
+        updateMission(dt);
         if (flying) {
             flyElapsed += dt;
             const float t = std::clamp(flyElapsed / 1.5f, 0.0f, 1.0f);
@@ -482,7 +684,7 @@ void Application::run() {
         orbitShader.set("view", view);
         orbitShader.set("projection", projection);
         glDisable(GL_CULL_FACE);
-        for (size_t i = 0; i < bodies.size(); ++i) {
+        for (std::size_t i = 0; i < bodies.size(); ++i) {
             orbitShader.set("model", glm::mat4(1));
             orbitShader.set("color", glm::vec3(0.26f, 0.31f, 0.42f));
             orbitLines[i].drawOrbit();
@@ -490,7 +692,7 @@ void Application::run() {
         if (selected >= 0) {
             const glm::vec3 position = bodyPosition(selected, simTime);
             const float radius =
-                selected == 8 ? 1.25f : bodies[static_cast<size_t>(selected)].radius;
+                selected == 8 ? 1.25f : bodies[static_cast<std::size_t>(selected)].radius;
             const glm::mat4 ringModel =
                 glm::translate(glm::mat4(1), position + glm::vec3(0, radius * 1.15f, 0)) *
                 glm::scale(glm::mat4(1), glm::vec3(radius * 1.35f, 1, radius * 1.35f));
@@ -517,19 +719,38 @@ void Application::run() {
         ImGui::SetNextWindowSize(ImVec2(350, static_cast<float>(height)), ImGuiCond_Always);
         ImGui::Begin("Mission Control", nullptr,
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
-        ImGui::Text("Team: Your Team | Event Horizon: Solar System Explorer");
-        ImGui::Text("FPS %.0f | Speed %dx | %s", dt > 0 ? 1 / dt : 0, speed,
+        ImGui::Text("Team: Your Team");
+        ImGui::Text("Event Horizon: Solar System Explorer");
+        ImGui::Text("FPS %.0f | Speed %dx | %s", ImGui::GetIO().Framerate, speed,
                     paused ? "Paused" : "Running");
-        ImGui::Text("Bloom %s | Lensing %s", bloom ? "ON" : "OFF", lensing ? "ON" : "OFF");
+        const char *missionStatus = "Start screen";
+        if (gameState == GameState::FreeExplore)
+            missionStatus = "Free explore";
+        else if (gameState == GameState::Mission)
+            missionStatus = "Mission active";
+        else if (gameState == GameState::Won)
+            missionStatus = "Mission won";
+        else if (gameState == GameState::Lost)
+            missionStatus = "Sun swallowed";
+        ImGui::Text("Status: %s | Score: %d / %d", missionStatus, missionScore,
+                    MISSION_TARGET_SCORE);
+        ImGui::Text("Bloom %s | Lensing %s | Instancing %s", bloom ? "ON" : "OFF",
+                    lensing ? "ON" : "OFF", instancing ? "ON" : "OFF");
+        ImGui::Text("Quality %s | Black hole %s | Light %.1f deg", highQuality ? "HIGH" : "LOW",
+                    blackHoleEnabled ? "ON" : "OFF", lightAngle * 57.2957795f);
+        if (gameState == GameState::Mission)
+            ImGui::ProgressBar(threat.getThreatProgress(), ImVec2(-1, 0), "Threat approaching");
         ImGui::Separator();
-        ImGui::Text("Select a world");
-        for (size_t i = 0; i < bodies.size(); ++i)
-            if (ImGui::Selectable(bodies[i].name.c_str(), selected == static_cast<int>(i)))
-                selectBody(static_cast<int>(i));
-        if (ImGui::Selectable("Sun", selected == 8))
-            selectBody(8);
+        if (gameplayActive) {
+            ImGui::Text("Select a world");
+            for (std::size_t i = 0; i < bodies.size(); ++i)
+                if (ImGui::Selectable(bodies[i].name.c_str(), selected == static_cast<int>(i)))
+                    selectBody(static_cast<int>(i));
+            if (ImGui::Selectable("Sun", selected == 8))
+                selectBody(8);
+        }
         if (selected >= 0) {
-            const Body &b = selected == 8 ? sunBody : bodies[static_cast<size_t>(selected)];
+            const Body &b = selected == 8 ? sunBody : bodies[static_cast<std::size_t>(selected)];
             ImGui::Separator();
             ImGui::Text("%s", b.name.c_str());
             ImGui::Text("Type: %s", b.type.c_str());
@@ -555,13 +776,51 @@ void Application::run() {
             }
         }
         ImGui::Separator();
-        ImGui::TextWrapped("RMB drag: camera | Wheel: zoom | F: free-fly | WASD move | Shift "
-                           "faster | 1/2/3 speed | Space pause | Esc overview");
+        if (gameState == GameState::FreeExplore)
+            ImGui::Text("Esc: back to overview");
+        ImGui::TextWrapped(
+            "RMB drag: camera | Wheel: zoom | F: free-fly | WASD move | Shift faster");
         ImGui::End();
         if (help) {
             ImGui::Begin("Controls");
-            ImGui::TextWrapped("Orbit camera: right mouse drag and wheel. F toggles free-fly; WASD "
-                               "moves and Shift increases speed. Select a planet to fly to it.");
+            ImGui::Text("F1 or H: toggle this help overlay");
+            ImGui::Text("Space: pause simulation");
+            ImGui::Text("1 / 2 / 3: simulation speed 1x / 5x / 10x");
+            ImGui::Text("G: toggle bloom state | L: toggle lensing state");
+            ImGui::Text("I: toggle instancing state | Q: toggle high / low sphere quality");
+            ImGui::Text("B: toggle black-hole state | R: restart mission");
+            ImGui::Text("F: toggle free-fly | [ / ]: rotate Sun light");
+            ImGui::Text("Esc: clear selection / return to overview");
+            ImGui::Text("F12: save screenshot");
+            ImGui::Text("Left click: select a body | Right drag: orbit camera | Wheel: zoom");
+            ImGui::Text("WASD: move in free-fly | Shift: move faster");
+            ImGui::End();
+        }
+        if (gameState == GameState::StartScreen) {
+            ImGui::SetNextWindowPos(
+                ImVec2(static_cast<float>(width) * 0.5f, static_cast<float>(height) * 0.5f),
+                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::Begin("Solar System Explorer", nullptr,
+                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+            ImGui::TextWrapped(
+                "Visit worlds and answer questions before the threat reaches the Sun.");
+            if (ImGui::Button("Start Mission", ImVec2(220, 0)))
+                startMission();
+            if (ImGui::Button("Free Explore", ImVec2(220, 0)))
+                startFreeExplore();
+            ImGui::End();
+        }
+        if (gameState == GameState::Won || gameState == GameState::Lost) {
+            ImGui::SetNextWindowPos(
+                ImVec2(static_cast<float>(width) * 0.5f, static_cast<float>(height) * 0.5f),
+                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::Begin("Mission Result", nullptr,
+                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+            ImGui::TextUnformatted(gameState == GameState::Won ? "Mission complete"
+                                                               : "The Sun was swallowed");
+            ImGui::Text("Final score: %d / %d", missionScore, MISSION_TARGET_SCORE);
+            if (ImGui::Button("Restart", ImVec2(220, 0)))
+                startMission();
             ImGui::End();
         }
         if (quizOpen) {
@@ -582,22 +841,27 @@ void Application::run() {
                 ImGui::TextWrapped("%s", q.question.c_str());
                 if (!quizAnswered) {
                     for (int i = 0; i < 4; ++i)
-                        if (ImGui::Button(q.choices[static_cast<size_t>(i)].c_str())) {
+                        if (ImGui::Button(q.choices[static_cast<std::size_t>(i)].c_str())) {
                             quizChoice = i;
                             quizAnswered = true;
-                            if (q.choices[static_cast<size_t>(i)] == q.answer)
+                            const bool correct = q.choices[static_cast<std::size_t>(i)] == q.answer;
+                            if (correct)
                                 ++quizScore;
+                            recordQuizAnswer(correct);
                         }
                 } else {
                     ImGui::TextColored(
-                        quizChoice >= 0 && q.choices[static_cast<size_t>(quizChoice)] == q.answer
+                        quizChoice >= 0 &&
+                                q.choices[static_cast<std::size_t>(quizChoice)] == q.answer
                             ? ImVec4(0.3f, 1, 0.4f, 1)
                             : ImVec4(1, 0.35f, 0.3f, 1),
                         "%s",
-                        quizChoice >= 0 && q.choices[static_cast<size_t>(quizChoice)] == q.answer
+                        quizChoice >= 0 &&
+                                q.choices[static_cast<std::size_t>(quizChoice)] == q.answer
                             ? "Correct!"
                             : "Not quite.");
-                    if (quizChoice < 0 || q.choices[static_cast<size_t>(quizChoice)] != q.answer)
+                    if (quizChoice < 0 ||
+                        q.choices[static_cast<std::size_t>(quizChoice)] != q.answer)
                         ImGui::Text("Correct answer: %s", q.answer.c_str());
                     if (ImGui::Button(quizQuestionIndex + 1 == quizRound.size() ? "Show result"
                                                                                 : "Next")) {
@@ -618,6 +882,10 @@ void Application::run() {
         }
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        if (screenshotRequested) {
+            saveScreenshot();
+            screenshotRequested = false;
+        }
         glfwSwapBuffers(window);
         glfwPollEvents();
     }

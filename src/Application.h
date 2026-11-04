@@ -2,11 +2,16 @@
 #include "Shader.h"
 #include "Mesh.h"
 #include "Texture.h"
+#include "ThreatInterface.h"
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#include <cstddef>
 #include <string>
 #include <vector>
 #include <array>
+
+enum class GameState { StartScreen, FreeExplore, Mission, Won, Lost };
+
 struct Body {
     std::string name;
     float orbit;
@@ -26,30 +31,39 @@ struct QuizQuestion {
 };
 
 class Application {
-  public:
+public:
     bool init();
     void run();
     ~Application();
 
-  private:
+private:
     GLFWwindow *window = nullptr;
     Shader shader;
     Shader sunShader;
     Shader skyShader;
     Shader orbitShader;
     Mesh sphere;
+    Mesh lowDetailSphere;
     std::vector<Mesh> orbitLines;
     Mesh highlightRing;
     Texture skyTexture;
     std::vector<Body> bodies;
     Body sunBody;
     std::vector<QuizQuestion> questions;
-    std::vector<size_t> quizRound;
+    std::vector<std::size_t> quizRound;
+    FallbackThreat threat;
 
     int width = 1280;
     int height = 720;
     int speed = 1;
     int selected = -1;
+    int missionScore = 0;
+    static constexpr int MISSION_TARGET_SCORE = 60;
+    GameState gameState = GameState::StartScreen;
+    std::array<bool, 9> visitedBodies{};
+    float threatSpeedMultiplier = 1.0f;
+    float lightAngle = 0.0f;
+    int screenshotIndex = 1;
     float simTime = 0;
     float yaw = 0;
     float pitch = 0.25f;
@@ -57,6 +71,9 @@ class Application {
     float overviewDistance = 22;
     bool bloom = true;
     bool lensing = true;
+    bool instancing = false;
+    bool highQuality = true;
+    bool blackHoleEnabled = true;
     bool paused = false;
     bool help = false;
     bool freeFly = false;
@@ -68,9 +85,19 @@ class Application {
     bool lastFDown = false;
     bool lastLeftDown = false;
     bool lastEscapeDown = false;
+    bool lastGDown = false;
+    bool lastLDown = false;
+    bool lastIDown = false;
+    bool lastQDown = false;
+    bool lastBDown = false;
+    bool lastF1Down = false;
+    bool lastHDown = false;
+    bool lastRDown = false;
+    bool lastF12Down = false;
+    bool screenshotRequested = false;
     float mouseX = 0, mouseY = 0;
     float flyElapsed = 0;
-    size_t quizQuestionIndex = 0;
+    std::size_t quizQuestionIndex = 0;
     int quizScore = 0;
     int quizChoice = -1;
     glm::vec3 currentCamera{0, 0, 22};
@@ -86,6 +113,12 @@ class Application {
     glm::vec3 bodyPosition(int index, float time) const;
     bool loadData();
     void beginQuiz();
+    void startMission();
+    void startFreeExplore();
+    void updateMission(float deltaTime);
+    void recordVisit(int index);
+    void recordQuizAnswer(bool correct);
+    void saveScreenshot();
     void draw(const Body &body, bool sun = false);
     void drawSky(const glm::mat4 &view, const glm::mat4 &projection);
 };

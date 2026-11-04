@@ -20,12 +20,15 @@ GLFW (Zlib/libpng), GLAD (MIT), GLM (Happy Bunny and MIT), Dear ImGui (MIT), stb
 
 ## Controls
 
-- `1`, `2`, `3`: simulation speed 1x / 5x / 10x; `Space`: pause
-- `G`: bloom, `L`: lensing
-- Right mouse drag orbits the camera; the wheel zooms. `F` toggles free-fly, `WASD` moves, and `Shift` moves faster.
-- Select a world in Mission Control or click it in the scene to open its information panel and fly to it. `Back` or `Esc` returns to the overview.
-- Start Quiz opens five randomized questions for the selected world; simulation time pauses until the quiz is closed.
-- `F1`: controls overlay
+- `Space`: pause or resume simulation; `1` / `2` / `3`: simulation speed 1x / 5x / 10x.
+- `G`: toggle Bloom HUD state; `L`: toggle Lensing HUD state; `I`: toggle Instancing HUD state.
+- `Q`: toggle high / low sphere detail; `B`: toggle the black-hole HUD state. These are interface placeholders until the corresponding renderer and black-hole modules are connected.
+- `R`: restart an active or finished mission; `F`: toggle free-fly; `[` / `]`: rotate the Sun light direction.
+- `Esc`: clear selection and smoothly return to the overview; `F12`: save a PNG in `screenshots/`.
+- `F1` or `H`: show or hide the complete controls overlay.
+- Left click or select a name in Mission Control: select a planet or the Sun and fly to it. Right mouse drag rotates the camera; the wheel zooms.
+- In free-fly, `W` / `A` / `S` / `D` move and `Shift` moves faster.
+- The start screen offers **Start Mission** and **Free Explore**. Mission visits and correct quiz answers earn points while the threat advances; quiz questions pause simulation time.
 
 The window can be resized and safely handles a minimized framebuffer. Team name is a placeholder.
 
@@ -35,8 +38,10 @@ The window can be resized and safely handles a minimized framebuffer. Team name 
 
 ## Feature status
 
-**Done:** Orbit line loops; orbit and free-fly cameras; click ray-sphere selection with a highlight ring; eased fly-to and follow; Sun and all planet information from JSON with missing-field warnings; five-question randomized quizzes with feedback and score; simulation pauses during quizzes.
+**Done:** Steps 1–7 and 9–12: orbit line loops; orbit and free-fly cameras; ray-sphere selection; eased fly-to/follow; planet information and quiz; a start screen with Free Explore and Mission; a fallback threat, scoring, terminal states, and restart; movable Sun light; help overlay; PNG screenshots; and OpenGL debug output in debug builds.
 
-**Partial:** The user interface and data are functional but intentionally simple; planet sizes and orbital distances in the rendered scene are stylized. Quality controls, planet surface textures, Sun corona, HDR framebuffer/bloom passes, lensing composition, black hole event/state machine, mission scoring, screenshot output, restart, instancing, rings, Earth clouds/night lights/atmosphere, movable light, FPS call counts, and GL debug callback remain unimplemented. Bloom/lensing keys currently change HUD state only. The post shader demonstrates equations but is not connected to a post-process pass.
+**Partial:** Step 8's HUD shows Bloom, Lensing, and Instancing toggle state and logs changes, but those switches are placeholders until the renderer modules are connected. `B` similarly changes the black-hole HUD placeholder only; it does not disable the fallback mission threat. Sphere detail toggling is implemented, while high-detail renderer features (HDR/bloom processing, lensing, instancing, rings, and detailed planet surfaces) remain outside this module. Scene sizes and distances are stylized.
 
-Build depends on fetching upstream repositories and has not been verified in this environment.
+**Missing:** None of steps 7–12 are missing from this gameplay/UI module. The black-hole visual and state machine are a teammate-owned integration and are not part of the fallback threat implementation here.
+
+Build uses CMake FetchContent and requires dependency sources at configure time. A successful clean-source verification is reported with the project handoff, not assumed from this README.
