@@ -5,9 +5,19 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 #include <cmath>
 
+namespace {
+// Compress real orbital periods so Earth takes two minutes at 1x while outer planets remain visibly in motion.
+constexpr float ORBIT_BASE_SECONDS = 120.0f;
+constexpr float ORBIT_COMPRESSION_EXPONENT = 0.5f;
+// Earth-day units per simulated second make Jupiter's 0.414-day spin last about 20 seconds at 1x.
+constexpr float ROTATION_SCALE = 0.0207f;
+}
+
 Application::~Application() {
+    skyTexture.release();
     if (window) {
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
@@ -25,7 +35,7 @@ bool Application::init() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    window = glfwCreateWindow(width, height, "Solar System 3D - Mission Control", nullptr, nullptr);
+    window = glfwCreateWindow(width, height, "Event Horizon: Solar System Explorer", nullptr, nullptr);
     if (!window) {
         return false;
     }
@@ -40,9 +50,11 @@ bool Application::init() {
     sphere.makeSphere(32, 48);
 
     if (!shader.load("shaders/planet.vert", "shaders/planet.frag") ||
-        !sunShader.load("shaders/planet.vert", "shaders/sun.frag")) {
+        !sunShader.load("shaders/planet.vert", "shaders/sun.frag") ||
+        !skyShader.load("shaders/sky.vert", "shaders/sky.frag")) {
         return false;
     }
+    skyTexture.load("assets/textures/stars_milky_way.jpg");
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -50,14 +62,14 @@ bool Application::init() {
     ImGui_ImplOpenGL3_Init("#version 330 core");
 
     bodies = {
-        {"Mercury", 3, 0.22f, 0.24f, {0.62f, 0.57f, 0.52f}},
-        {"Venus", 4.2f, 0.34f, 0.62f, {0.86f, 0.62f, 0.31f}},
-        {"Earth", 5.7f, 0.38f, 1, {0.14f, 0.42f, 0.93f}},
-        {"Mars", 7.1f, 0.30f, 1.88f, {0.85f, 0.27f, 0.12f}},
-        {"Jupiter", 9.5f, 0.85f, 11.86f, {0.82f, 0.56f, 0.37f}},
-        {"Saturn", 12.3f, 0.72f, 29.4f, {0.85f, 0.76f, 0.53f}},
-        {"Uranus", 15, 0.58f, 84, {0.42f, 0.82f, 0.84f}},
-        {"Neptune", 17.5f, 0.56f, 164.8f, {0.22f, 0.34f, 0.9f}}
+        {"Mercury", 3, 0.22f, 0.24f, 58.6f, {0.62f, 0.57f, 0.52f}},
+        {"Venus", 4.2f, 0.34f, 0.62f, 243.0f, {0.86f, 0.62f, 0.31f}},
+        {"Earth", 5.7f, 0.38f, 1, 0.997f, {0.14f, 0.42f, 0.93f}},
+        {"Mars", 7.1f, 0.30f, 1.88f, 1.026f, {0.85f, 0.27f, 0.12f}},
+        {"Jupiter", 9.5f, 0.85f, 11.86f, 0.414f, {0.82f, 0.56f, 0.37f}},
+        {"Saturn", 12.3f, 0.72f, 29.4f, 0.444f, {0.85f, 0.76f, 0.53f}},
+        {"Uranus", 15, 0.58f, 84, 0.718f, {0.42f, 0.82f, 0.84f}},
+        {"Neptune", 17.5f, 0.56f, 164.8f, 0.671f, {0.22f, 0.34f, 0.9f}}
     };
     return true;
 }
@@ -71,19 +83,21 @@ glm::vec3 Application::cameraPosition() const {
 }
 
 void Application::draw(const Body& body, bool sun) {
-    const float angle = time * 6.2831853f / body.period;
+    const float orbitPeriodSeconds = ORBIT_BASE_SECONDS * std::pow(body.period, ORBIT_COMPRESSION_EXPONENT);
+    const float angle = simTime * 6.2831853f / orbitPeriodSeconds;
     const glm::vec3 position = body.orbit
         ? glm::vec3(body.orbit * std::cos(angle), 0, body.orbit * std::sin(angle))
         : glm::vec3(0);
     glm::mat4 model = glm::translate(glm::mat4(1), position);
-    model = glm::rotate(model, time * 0.5f, glm::vec3(0, 1, 0));
+    const float rotationAngle = simTime * 6.2831853f * ROTATION_SCALE / body.rotationPeriodDays;
+    model = glm::rotate(model, rotationAngle, glm::vec3(0, 1, 0));
     model = glm::scale(model, glm::vec3(body.radius));
 
     Shader& activeShader = sun ? sunShader : shader;
     activeShader.use();
     activeShader.set("model", model);
     if (sun) {
-        activeShader.set("time", time);
+        activeShader.set("time", simTime);
     } else {
         activeShader.set("color", body.color);
         activeShader.set("lightPos", glm::vec3(0));
@@ -93,13 +107,32 @@ void Application::draw(const Body& body, bool sun) {
     sphere.draw();
 }
 
+void Application::drawSky(const glm::mat4& view, const glm::mat4& projection) {
+    const glm::mat4 rotationOnlyView = glm::mat4(glm::mat3(view));
+    skyShader.use();
+    skyShader.set("view", rotationOnlyView);
+    skyShader.set("projection", projection);
+    skyShader.set("model", glm::scale(glm::mat4(1.0f), glm::vec3(90.0f)));
+    glUniform1i(glGetUniformLocation(skyShader.id, "useTexture"), skyTexture.isLoaded() ? GL_TRUE : GL_FALSE);
+    skyTexture.bind();
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    sphere.draw();
+    glEnable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+}
+
 void Application::input(float deltaTime) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
         selected = -1;
     }
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+    const bool spaceIsDown = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+    if (spaceIsDown && !spaceWasDown) {
         paused = !paused;
     }
+    spaceWasDown = spaceIsDown;
     if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS) {
         speed = 1;
     }
@@ -130,7 +163,7 @@ void Application::run() {
     last = static_cast<float>(glfwGetTime());
     while (!glfwWindowShouldClose(window)) {
         const float now = static_cast<float>(glfwGetTime());
-        const float deltaTime = now - last;
+        const float deltaTime = std::clamp(now - last, 0.0f, 0.05f);
         last = now;
         glfwGetFramebufferSize(window, &width, &height);
         if (width == 0 || height == 0) {
@@ -140,7 +173,7 @@ void Application::run() {
 
         input(deltaTime);
         if (!paused) {
-            time += deltaTime * static_cast<float>(speed);
+            simTime += deltaTime * static_cast<float>(speed);
         }
         glViewport(0, 0, width, height);
         glClearColor(0.004f, 0.006f, 0.025f, 1);
@@ -150,6 +183,7 @@ void Application::run() {
         const glm::mat4 view = glm::lookAt(camera, glm::vec3(0), glm::vec3(0, 1, 0));
         const glm::mat4 projection = glm::perspective(
             glm::radians(45.0f), static_cast<float>(width) / static_cast<float>(height), 0.1f, 100.0f);
+        drawSky(view, projection);
         shader.use();
         shader.set("view", view);
         shader.set("projection", projection);
@@ -157,7 +191,7 @@ void Application::run() {
             draw(body);
         }
 
-        const Body sun{"Sun", 0, 1.25f, 1, {1, 0.62f, 0.12f}};
+        const Body sun{"Sun", 0, 1.25f, 1, 25.0f, {1, 0.62f, 0.12f}};
         sunShader.use();
         sunShader.set("view", view);
         sunShader.set("projection", projection);
@@ -167,7 +201,7 @@ void Application::run() {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         ImGui::Begin("Mission Control");
-        ImGui::Text("Team: Your Team | Solar System 3D");
+        ImGui::Text("Team: Your Team | Event Horizon: Solar System Explorer");
         ImGui::Text("FPS %.0f | Speed %dx | %s", deltaTime > 0 ? 1 / deltaTime : 0, speed, paused ? "Paused" : "Running");
         ImGui::Text("Score 0 | Free Explore");
         ImGui::Text("Bloom %s | Lensing %s | Instancing OFF", bloom ? "ON" : "OFF", lensing ? "ON" : "OFF");

@@ -51,8 +51,9 @@ ipch/
 /imgui.ini
 /work/
 
-# Large downloaded assets (store asset-download instructions instead)
-/assets/textures/
+# Large downloaded assets (keep only the placement instructions)
+/assets/textures/**
+!/assets/textures/README.txt
 
 # IDE and operating-system files
 /.vscode/
