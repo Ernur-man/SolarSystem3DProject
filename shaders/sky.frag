@@ -34,7 +34,8 @@ void main() {
         return;
     }
 
-    // Quantized 3D direction hashes create sparse stars; a second hash varies their brightness and tint.
+    // Quantized 3D direction hashes create sparse stars; a second hash varies their brightness and
+    // tint.
     vec3 starCell = floor(d * 540.0);
     float starHash = hash3(starCell);
     float star = step(0.9988, starHash);

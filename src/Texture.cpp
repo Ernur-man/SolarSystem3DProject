@@ -16,12 +16,11 @@ void Texture::release() {
     }
 }
 
-bool Texture::load(const std::string& path) {
+bool Texture::load(const std::string &path) {
     stbi_set_flip_vertically_on_load(1);
     int width = 0;
     int height = 0;
-    int channels = 0;
-    unsigned char* pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+    unsigned char *pixels = stbi_load(path.c_str(), &width, &height, nullptr, STBI_rgb_alpha);
     if (pixels == nullptr) {
         std::cerr << "Warning: optional sky texture not found at " << path
                   << "; using procedural starfield. " << stbi_failure_reason() << '\n';
@@ -30,7 +29,8 @@ bool Texture::load(const std::string& path) {
 
     glGenTextures(1, &textureId);
     glBindTexture(GL_TEXTURE_2D, textureId);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 pixels);
     glGenerateMipmap(GL_TEXTURE_2D);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);

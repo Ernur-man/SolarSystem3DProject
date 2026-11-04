@@ -4,13 +4,15 @@
 #include <string>
 
 class Texture {
-public:
+  public:
     ~Texture();
-    bool load(const std::string& path);
-    bool isLoaded() const { return textureId != 0; }
+    bool load(const std::string &path);
+    bool isLoaded() const {
+        return textureId != 0;
+    }
     void bind() const;
     void release();
 
-private:
+  private:
     GLuint textureId = 0;
 };

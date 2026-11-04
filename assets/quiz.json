@@ -1,4 +1,10 @@
 [
+ {"planet":"Sun","question":"What type of star is the Sun?","choices":["G-type main-sequence star","Red giant","White dwarf","Neutron star"],"answer":"G-type main-sequence star"},
+ {"planet":"Sun","question":"What process powers the Sun's core?","choices":["Nuclear fusion","Nuclear fission","Chemical burning","Radioactive decay"],"answer":"Nuclear fusion"},
+ {"planet":"Sun","question":"Which element is most abundant in the Sun?","choices":["Hydrogen","Oxygen","Carbon","Iron"],"answer":"Hydrogen"},
+ {"planet":"Sun","question":"About what fraction of Solar System mass is in the Sun?","choices":["99.86%","50%","10%","1%"],"answer":"99.86%"},
+ {"planet":"Sun","question":"What is the visible surface layer of the Sun called?","choices":["Photosphere","Chromosphere","Corona","Core"],"answer":"Photosphere"},
+ {"planet":"Sun","question":"Which star is closest to Earth?","choices":["The Sun","Sirius","Proxima Centauri","Alpha Centauri A"],"answer":"The Sun"},
  {"planet":"Mercury","question":"Which planet is closest to the Sun?","choices":["Mercury","Venus","Earth","Mars"],"answer":"Mercury"},
  {"planet":"Mercury","question":"How many moons does Mercury have?","choices":["0","1","2","4"],"answer":"0"},
  {"planet":"Mercury","question":"Mercury is the Solar System's what largest planet?","choices":["Smallest","Second largest","Third largest","Largest"],"answer":"Smallest"},
