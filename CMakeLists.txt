@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
-project(SolarSystem3D VERSION 1.0 LANGUAGES C CXX)
+project("Event Horizon: Solar System Explorer" VERSION 1.0 LANGUAGES C CXX)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -29,7 +32,7 @@ add_library(imgui STATIC ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui
 target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(imgui PUBLIC glfw)
 add_executable(solar_system
-  src/main.cpp src/Application.cpp src/Shader.cpp src/Mesh.cpp)
+  src/main.cpp src/Application.cpp src/Shader.cpp src/Mesh.cpp src/Texture.cpp)
 target_include_directories(solar_system PRIVATE src ${stb_SOURCE_DIR})
 target_link_libraries(solar_system PRIVATE glfw glm::glm glad imgui)
 if(MSVC)

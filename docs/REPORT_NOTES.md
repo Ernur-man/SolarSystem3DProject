@@ -1,4 +1,4 @@
-# Graphics report notes
+# Event Horizon: Solar System Explorer — Graphics Report Notes
 
 This note describes only equations currently present in shader source. The post shader is a sample fragment shader and is not wired into the current frame renderer.
 
