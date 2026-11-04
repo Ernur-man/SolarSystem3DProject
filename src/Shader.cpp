@@ -1,5 +1,6 @@
 #include "Shader.h"
 
+#include <cstddef>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -16,7 +17,7 @@ std::string readFile(const std::string &path) {
     contents << file.rdbuf();
     return contents.str();
 }
-} // namespace
+}
 
 bool Shader::load(const std::string &vertexPath, const std::string &fragmentPath) {
     const std::string vertexSource = readFile(vertexPath);
@@ -36,7 +37,7 @@ bool Shader::load(const std::string &vertexPath, const std::string &fragmentPath
         if (!compiled) {
             GLint logLength = 0;
             glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLength);
-            std::string log(static_cast<size_t>(logLength), '\0');
+            std::string log(static_cast<std::size_t>(logLength), '\0');
             glGetShaderInfoLog(shader, logLength, nullptr, log.data());
             std::cerr << "Shader compile error [" << file << "]:\n" << log << '\n';
             glDeleteShader(shader);
@@ -63,7 +64,7 @@ bool Shader::load(const std::string &vertexPath, const std::string &fragmentPath
     if (!linked) {
         GLint logLength = 0;
         glGetProgramiv(id, GL_INFO_LOG_LENGTH, &logLength);
-        std::string log(static_cast<size_t>(logLength), '\0');
+        std::string log(static_cast<std::size_t>(logLength), '\0');
         glGetProgramInfoLog(id, logLength, nullptr, log.data());
         std::cerr << "Shader link error [" << vertexPath << ", " << fragmentPath << "]:\n"
                   << log << '\n';

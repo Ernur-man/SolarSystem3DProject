@@ -1,7 +1,7 @@
 #pragma once
 #include <glad/glad.h>
 class Mesh {
-  public:
+public:
     GLuint vao = 0;
     GLuint vbo = 0;
     GLuint ebo = 0;

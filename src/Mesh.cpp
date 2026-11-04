@@ -1,6 +1,7 @@
 #include "Mesh.h"
 
 #include <cmath>
+#include <cstddef>
 #include <vector>
 
 void Mesh::makeSphere(unsigned rings, unsigned sectors) {
@@ -58,7 +59,7 @@ void Mesh::draw() const {
 
 void Mesh::makeOrbit(float radius, unsigned segments) {
     std::vector<float> vertices;
-    vertices.reserve(static_cast<size_t>(segments) * 3);
+    vertices.reserve(static_cast<std::size_t>(segments) * 3);
     for (unsigned i = 0; i < segments; ++i) {
         const float angle = 6.2831853f * static_cast<float>(i) / static_cast<float>(segments);
         vertices.insert(vertices.end(), {radius * std::cos(angle), 0.0f, radius * std::sin(angle)});

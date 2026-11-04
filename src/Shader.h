@@ -4,7 +4,7 @@
 #include <glm/glm.hpp>
 
 class Shader {
-  public:
+public:
     GLuint id = 0;
 
     bool load(const std::string &vertexPath, const std::string &fragmentPath);
