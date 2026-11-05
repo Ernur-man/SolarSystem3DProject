@@ -4,6 +4,8 @@
 #include <stb_image.h>
 
 #include <iostream>
+#include <algorithm>
+#include <cstring>
 
 Texture::~Texture() {
     release();
@@ -38,6 +40,26 @@ bool Texture::load(const std::string &path, bool srgb, const char *fallbackDescr
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // OpenGL 3.3 drivers may expose anisotropy as an extension rather than a core feature.
+    GLint extensionCount = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &extensionCount);
+    bool hasAnisotropy = false;
+    for (GLint i = 0; i < extensionCount; ++i) {
+        const auto *extension = reinterpret_cast<const char *>(
+            glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(i)));
+        if (extension != nullptr && std::strcmp(extension, "GL_EXT_texture_filter_anisotropic") == 0) {
+            hasAnisotropy = true;
+            break;
+        }
+    }
+    if (hasAnisotropy) {
+        constexpr GLenum maxAnisotropyToken = 0x84FF;
+        constexpr GLenum textureAnisotropyToken = 0x84FE;
+        GLfloat maximumAnisotropy = 1.0f;
+        glGetFloatv(maxAnisotropyToken, &maximumAnisotropy);
+        glTexParameterf(GL_TEXTURE_2D, textureAnisotropyToken,
+                        std::min(maximumAnisotropy, 8.0f));
+    }
     stbi_image_free(pixels);
     return true;
 }

@@ -37,6 +37,12 @@ public:
     const char *getStateName() const;
     glm::vec3 getPosition() const;
     float getVisibility() const;
+    float getHorizonRadius() const;
+    float getPullRadius() const;
+    float getMaxPullStrength() const;
+    float getMaxBodyStretch() const;
+    float getStretchInfluenceRadius() const;
+    float getBodyActivationThreshold() const;
     BodyEffect affectBody(const glm::vec3 &orbitPosition, bool sun) const;
 
     void draw(const glm::mat4 &view, const glm::mat4 &projection,
@@ -49,7 +55,12 @@ private:
     static constexpr float EVENT_HORIZON_RADIUS = 1.35f;
     static constexpr float DISK_INNER_RADIUS = 1.55f;
     static constexpr float DISK_OUTER_RADIUS = 5.4f;
-    static constexpr float TRANSITION_SECONDS = 60.0f;
+    static constexpr float PULL_RADIUS = 8.0f;
+    static constexpr float MAX_PULL_STRENGTH = 8.0f;
+    static constexpr float MAX_BODY_STRETCH = 4.0f;
+    static constexpr float BODY_ACTIVATION_THRESHOLD = 0.10f;
+    // Defence tuning point: p advances from 0 to 1 in about 90 seconds at 1x.
+    static constexpr float kSwallowSecondsAtOneX = 90.0f;
 
     BlackHoleState state = BlackHoleState::Idle;
     float progress = 0.0f;

@@ -9,10 +9,18 @@ Expected files:
     earth_normal.jpg      Earth tangent-space normal map
     earth_specular.jpg    Earth specular mask
     saturn_ring.png       Saturn ring color and alpha map
+    mercury.jpg           Mercury color/albedo map
+    venus.jpg             Venus color/cloud map
+    mars.jpg              Mars color/albedo map
+    jupiter.jpg           Jupiter color/cloud map
+    saturn.jpg            Saturn color/cloud map
+    uranus.jpg            Uranus color/cloud map
+    neptune.jpg           Neptune color/cloud map
+    moon.jpg              Moon color/albedo map
 
-Missing Earth maps, the Saturn ring map, and the sky map each produce a warning naming the path;
-the shader uses its procedural fallback. A Mars normal map is not currently present, so Mars uses
-its geometric sphere normals.
+Missing image maps produce a warning naming the path; planet and Moon shaders use their procedural
+surface fallback. The application does not download or require any image files.
 
 Solar System Scope textures are CC BY 4.0 and require attribution:
 https://www.solarsystemscope.com/textures/
+Credit: Textures by Solar System Scope, licensed CC BY 4.0; attribution is required when using them.
