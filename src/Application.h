@@ -32,6 +32,24 @@ struct QuizQuestion {
     std::array<std::string, 4> choices;
 };
 
+struct Meteor {
+    glm::vec3 start;
+    glm::vec3 direction;
+    glm::vec3 color;
+    float phase = 0.0f;
+    float speed = 1.0f;
+    float radius = 0.05f;
+};
+
+struct Asteroid {
+    float orbitRadius = 0.0f;
+    float angle = 0.0f;
+    float angularSpeed = 0.0f;
+    float verticalOffset = 0.0f;
+    float size = 0.0f;
+    glm::vec3 color{0.5f};
+};
+
 class Application {
 public:
     bool init();
@@ -47,10 +65,20 @@ private:
     Shader ringShader;
     Shader skyShader;
     Shader orbitShader;
+    Shader meteorShader;
+    Shader asteroidShader;
     Mesh sphere;
     Mesh lowDetailSphere;
     std::vector<Mesh> orbitLines;
     Mesh highlightRing;
+    Mesh earthMoonOrbitLine;
+    GLuint meteorQuadVao = 0;
+    GLuint meteorQuadVbo = 0;
+    std::vector<Meteor> meteors;
+    Mesh asteroidMesh;
+    GLuint asteroidInstanceVbo = 0;
+    std::vector<Asteroid> asteroids;
+    GLsizei asteroidDrawCalls = 0;
     Mesh saturnRing;
     Texture skyTexture;
     Texture earthDayTexture;
@@ -59,6 +87,7 @@ private:
     Texture earthNormalTexture;
     Texture earthSpecularTexture;
     Texture saturnRingTexture;
+    std::array<Texture, 8> worldTextures;
     PostProcess postProcess;
     std::vector<Body> bodies;
     Body sunBody;
@@ -69,6 +98,8 @@ private:
 
     int width = 1280;
     int height = 720;
+    int windowWidth = 1280;
+    int windowHeight = 720;
     int speed = 1;
     int selected = -1;
     int missionScore = 0;
@@ -85,8 +116,10 @@ private:
     float overviewDistance = 22;
     bool bloom = true;
     bool lensing = true;
-    bool instancing = false;
+    bool instancing = true;
     bool highQuality = true;
+    bool meteorsEnabled = true;
+    bool freeExploreSwallowedDismissed = false;
     bool useFallbackThreat = false;
     bool paused = false;
     bool help = false;
@@ -103,6 +136,7 @@ private:
     bool lastLDown = false;
     bool lastIDown = false;
     bool lastQDown = false;
+    bool lastMDown = false;
     bool lastBDown = false;
     bool lastF1Down = false;
     bool lastHDown = false;
@@ -122,6 +156,7 @@ private:
     glm::vec3 freeForward{0, 0, -1};
 
     glm::vec3 cameraPosition() const;
+    static void framebufferSizeCallback(GLFWwindow *window, int width, int height);
     void input(float deltaTime);
     void selectBody(int index);
     glm::vec3 bodyPosition(int index, float time) const;
@@ -129,6 +164,7 @@ private:
     void beginQuiz();
     void startMission(bool summonHole = true);
     void startFreeExplore();
+    void returnToMenu();
     void updateMission(float deltaTime);
     void recordVisit(int index);
     void recordQuizAnswer(bool correct);
@@ -137,7 +173,11 @@ private:
               bool sun = false);
     void drawSky(const glm::mat4 &view, const glm::mat4 &projection);
     void drawSaturnRing(const glm::mat4 &view, const glm::mat4 &projection);
+    void drawEarthMoon(const glm::mat4 &view, const glm::mat4 &projection);
+    void drawMeteors(const glm::mat4 &view, const glm::mat4 &projection);
+    void drawAsteroids(const glm::mat4 &view, const glm::mat4 &projection);
     void applyQualitySettings();
     ThreatInterface &activeThreat();
     BodyEffect bodyEffect(int index) const;
+    glm::vec3 earthMoonPosition() const;
 };

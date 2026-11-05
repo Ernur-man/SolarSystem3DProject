@@ -38,17 +38,19 @@ Idle --B/mission start--> Approaching --p reaches 1--> Consuming
 
 Mission start resets the real threat and summons it from progress zero. Free Explore resets it to Idle and B summons it. B returns an approaching or consuming hole. R restarts the mission, restoring progress and all body transforms before the automatic new approach. `FallbackThreat` remains as an alternate implementation of `ThreatInterface`.
 
-In Free Explore, R also requests the return. In Mission, R keeps its existing restart behavior; B returns the active hole. Each state transition is printed to the console and the HUD shows the state plus `p` as a percentage.
+In Free Explore, R requests the return before the Sun is swallowed and restarts the whole scene after `p=1`. The centered ending panel offers **Restart** or **Keep watching**; keeping watch leaves the scene paused and hides the panel. Mission loss uses its centered result panel with **Restart** and **Back to menu**. Restart resets the hole, eased threat speed, mission/quiz state, selection, camera, pause state, body animation time, asteroid/meteor time, and rendering toggles. Since orbital and belt transforms are recalculated from simulation time, resetting that time restores their original arrangement without stored offsets. Each state transition is printed to the console and the HUD shows the state plus `p` as a percentage.
 
 The progress `p` is the threat interface value. Correct quiz answers lower the target speed multiplier; wrong answers raise it. The current speed eases toward that target, so a quiz answer does not cause a progress jump:
 
 ```text
 currentSpeed += (targetSpeed - currentSpeed) * (1 - exp(-3*dt))
-step = dt * currentSpeed / 60
+step = dt * currentSpeed / kSwallowSecondsAtOneX
 p(next) = clamp(p + step, 0, 1)        while approaching
 p(next) = clamp(p - step, 0, 1)        while returning
 targetSpeed = clamp(answerMultiplier, 0.25, 4.0)
 ```
+
+`kSwallowSecondsAtOneX` is the single tuning constant in `BlackHole.h`, currently `90.0f`; at a steady 1x multiplier the one-way sequence takes about 90 seconds. Returning subtracts the same step from `p`, so it is the time-reversed path and reaches exactly zero without a jump. Quiz scoring is unchanged: visiting all nine bodies yields 45 points, so two correct answers (20 points) reach the 60-point target; quizzes pause simulation, leaving the full 90 seconds of threat time available at 1x. The mission remains winnable. Correct answers slow the eased threat multiplier; wrong answers speed it up.
 
 Smoothstep is `S(x) = x*x*(3 - 2*x)` for `x` in `[0,1]`.
 
@@ -100,6 +102,21 @@ opacity = remaining
 ```
 
 The planet and Sun shaders multiply their linear RGB output by `opacity` (emission fade) while retaining opaque alpha. When remaining is at most 0.001, rendering and picking skip the body. At `p=0`, activation is zero and every body returns to its original position and size.
+
+Asteroids use the matching pull, stretch, and fade in `shaders/asteroid.vert`, with the hole position, `p`, `Rs`, pull radius, maximum pull/stretch, stretch influence radius, and activation threshold supplied by `BlackHole`. For each asteroid center at the current simulation time:
+
+```text
+activation = smoothstep(activationThreshold, 1, p)
+pullStrength(p) = maximumPullStrength * activation
+w = clamp(pullStrength(p) / (1 + (d / pullRadius)^2), 0, 1)
+displaced = instancePosition + (holePosition - instancePosition) * w
+dAfterPull = length(holePosition - displaced)
+nearHole = 1 - smoothstep(Rs, stretchInfluenceRadius, dAfterPull)
+stretch = 1 + maximumBodyStretch * nearHole * activation
+opacity = 1 - clamp((1 - smoothstep(0.65*Rs, 1.4*Rs, dAfterPull)) * activation, 0, 1)
+```
+
+The instance transform is evaluated from the current-time orbit position each frame, so instanced and individual comparison draws share the same effect and returning/restarting cannot accumulate drift. A short heat envelope briefly adds orange-white HDR emission above 1 before the horizon fade removes the asteroid. Meteors apply the same stateless center pull/stretch/fade to their head and streak using their current simulation-time position. Their movement, asteroid movement, and hole state pause and speed together with simulation speed. Existing asteroid-planet repulsion and its impact glow still run after the black-hole transform.
 
 ## Accretion disk equations
 

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -30,6 +31,16 @@ namespace {
 constexpr float ORBIT_BASE_SECONDS = 120.0f;
 constexpr float ORBIT_COMPRESSION_EXPONENT = 0.5f;
 constexpr float ROTATION_SCALE = 0.0207f;
+constexpr float EARTH_MOON_ORBIT_RADIUS = 1.02f;
+constexpr float EARTH_MOON_RADIUS = 0.105f;
+// One full ring-pattern revolution per 25 simulated seconds at 1x.
+constexpr float kRingSpinSpeed = 6.2831853f / 25.0f;
+constexpr std::size_t ASTEROID_COUNT_HIGH = 4000;
+constexpr std::size_t ASTEROID_COUNT_LOW = 1800;
+// Three-radius clearances cross in this stylized system (8.0 > 6.95); use 1.5R margins.
+constexpr float ASTEROID_BELT_INNER_RADIUS = 7.1f + 0.30f * 1.5f;
+constexpr float ASTEROID_BELT_OUTER_RADIUS = 9.5f - 0.85f * 1.5f;
+constexpr float ASTEROID_VERTICAL_SPREAD = 0.20f;
 float scrollDelta = 0.0f;
 void scrollCallback(GLFWwindow *, double, double y) {
     scrollDelta += static_cast<float>(y);
@@ -76,6 +87,17 @@ std::vector<std::string> stringArray(const std::string &object, const char *key)
     return values;
 }
 
+int surfaceTextureIndex(const std::string &name) {
+    if (name == "Mercury") return 0;
+    if (name == "Venus") return 1;
+    if (name == "Mars") return 2;
+    if (name == "Jupiter") return 3;
+    if (name == "Saturn") return 4;
+    if (name == "Uranus") return 5;
+    if (name == "Neptune") return 6;
+    return 7;
+}
+
 std::string readText(const char *path) {
     std::ifstream file(path);
     if (!file) {
@@ -91,6 +113,16 @@ std::string readText(const char *path) {
 Application::~Application() {
     blackHole.release();
     postProcess.release();
+    if (meteorQuadVbo != 0)
+        glDeleteBuffers(1, &meteorQuadVbo);
+    if (meteorQuadVao != 0)
+        glDeleteVertexArrays(1, &meteorQuadVao);
+    if (asteroidInstanceVbo != 0)
+        glDeleteBuffers(1, &asteroidInstanceVbo);
+    if (asteroidShader.id != 0)
+        glDeleteProgram(asteroidShader.id);
+    if (meteorShader.id != 0)
+        glDeleteProgram(meteorShader.id);
     skyTexture.release();
     earthDayTexture.release();
     earthNightTexture.release();
@@ -228,7 +260,9 @@ bool Application::init() {
         !atmosphereShader.load("shaders/atmosphere.vert", "shaders/atmosphere.frag") ||
         !ringShader.load("shaders/ring.vert", "shaders/ring.frag") ||
         !skyShader.load("shaders/sky.vert", "shaders/sky.frag") ||
-        !orbitShader.load("shaders/orbit.vert", "shaders/orbit.frag"))
+        !orbitShader.load("shaders/orbit.vert", "shaders/orbit.frag") ||
+        !asteroidShader.load("shaders/asteroid.vert", "shaders/asteroid.frag") ||
+        !meteorShader.load("shaders/meteor.vert", "shaders/meteor.frag"))
         return false;
     skyTexture.load("assets/textures/stars_milky_way.jpg", true, "procedural starfield");
     earthDayTexture.load("assets/textures/earth_day.jpg", true, "procedural Earth surface");
@@ -238,6 +272,12 @@ bool Application::init() {
     earthSpecularTexture.load("assets/textures/earth_specular.jpg", false,
                               "constant ocean and land specular values");
     saturnRingTexture.load("assets/textures/saturn_ring.png", true, "procedural ring bands");
+    const std::array<const char *, 8> worldTexturePaths = {
+        "assets/textures/mercury.jpg", "assets/textures/venus.jpg", "assets/textures/mars.jpg",
+        "assets/textures/jupiter.jpg", "assets/textures/saturn.jpg", "assets/textures/uranus.jpg",
+        "assets/textures/neptune.jpg", "assets/textures/moon.jpg"};
+    for (std::size_t i = 0; i < worldTextures.size(); ++i)
+        worldTextures[i].load(worldTexturePaths[i], true, "procedural surface");
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
@@ -256,11 +296,101 @@ bool Application::init() {
         orbitLines.emplace_back();
         orbitLines.back().makeOrbit(body.orbit);
     }
+    earthMoonOrbitLine.makeOrbit(EARTH_MOON_ORBIT_RADIUS);
     glfwGetFramebufferSize(window, &width, &height);
     if (!postProcess.initialize(width, height, highQuality ? 1.0f : 0.75f))
         return false;
     saturnRing.makeRing(1.35f, 2.6f);
-    return blackHole.initialize(postProcess.getWidth(), postProcess.getHeight());
+    if (!blackHole.initialize(postProcess.getWidth(), postProcess.getHeight()))
+        return false;
+
+    const float meteorQuad[] = {-1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+                                1.0f, 1.0f, 0.0f, -1.0f, 0.0f, 0.0f,
+                                1.0f, 1.0f, 0.0f, -1.0f, 1.0f, 0.0f};
+    glGenVertexArrays(1, &meteorQuadVao);
+    glGenBuffers(1, &meteorQuadVbo);
+    glBindVertexArray(meteorQuadVao);
+    glBindBuffer(GL_ARRAY_BUFFER, meteorQuadVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(meteorQuad), meteorQuad, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+
+    std::mt19937 random(std::random_device{}());
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    std::uniform_real_distribution<float> speedRange(0.20f, 0.45f);
+    std::uniform_real_distribution<float> radiusRange(0.035f, 0.075f);
+    meteors.reserve(36);
+    for (int i = 0; i < 36; ++i) {
+        glm::vec3 direction(unit(random) - 0.5f, (unit(random) - 0.5f) * 0.2f,
+                            unit(random) - 0.5f);
+        direction = glm::normalize(direction);
+        const glm::vec3 start = -direction * (26.0f + unit(random) * 16.0f) +
+                                glm::vec3((unit(random) - 0.5f) * 14.0f,
+                                          (unit(random) - 0.5f) * 8.0f,
+                                          (unit(random) - 0.5f) * 14.0f);
+        meteors.push_back({start, direction,
+                           glm::vec3(0.8f + unit(random) * 0.2f,
+                                     0.48f + unit(random) * 0.36f, 0.2f + unit(random) * 0.2f),
+                           unit(random), speedRange(random), radiusRange(random)});
+    }
+
+    asteroidMesh.makeSphere(6, 8);
+    glGenBuffers(1, &asteroidInstanceVbo);
+    glBindVertexArray(asteroidMesh.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, asteroidInstanceVbo);
+    glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    for (GLuint column = 0; column < 4; ++column) {
+        glEnableVertexAttribArray(3 + column);
+        glVertexAttribPointer(3 + column, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4),
+                              reinterpret_cast<void *>(static_cast<std::uintptr_t>(column * 4 * sizeof(float))));
+        glVertexAttribDivisor(3 + column, 1);
+    }
+    glBindVertexArray(0);
+    std::uniform_real_distribution<float> orbitRange(ASTEROID_BELT_INNER_RADIUS,
+                                                       ASTEROID_BELT_OUTER_RADIUS);
+    std::uniform_real_distribution<float> asteroidSize(0.018f, 0.055f);
+    std::uniform_real_distribution<float> angularRange(0.008f, 0.022f);
+    std::uniform_real_distribution<float> verticalRange(-ASTEROID_VERTICAL_SPREAD,
+                                                          ASTEROID_VERTICAL_SPREAD);
+    asteroids.reserve(ASTEROID_COUNT_HIGH);
+    for (std::size_t i = 0; i < ASTEROID_COUNT_HIGH; ++i) {
+        const float shade = 0.35f + unit(random) * 0.38f;
+        asteroids.push_back({orbitRange(random), unit(random) * 6.2831853f,
+                             angularRange(random), verticalRange(random), asteroidSize(random),
+                             glm::vec3(shade, shade * 0.91f, shade * 0.78f)});
+    }
+    glfwSetWindowUserPointer(window, this);
+    glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+    glfwGetFramebufferSize(window, &width, &height);
+    glViewport(0, 0, width, height);
+    return true;
+}
+
+void Application::framebufferSizeCallback(GLFWwindow *window, int framebufferWidth,
+                                          int framebufferHeight) {
+    auto *application = static_cast<Application *>(glfwGetWindowUserPointer(window));
+    if (!application)
+        return;
+    application->width = framebufferWidth;
+    application->height = framebufferHeight;
+    glfwGetWindowSize(window, &application->windowWidth, &application->windowHeight);
+    if (framebufferWidth == 0 || framebufferHeight == 0)
+        return;
+
+    glViewport(0, 0, framebufferWidth, framebufferHeight);
+    // PostProcess::resize recreates the HDR scene and bloom ping-pong targets.
+    if (!application->postProcess.resize(framebufferWidth, framebufferHeight,
+                                         application->highQuality ? 1.0f : 0.75f)) {
+        std::cerr << "Failed to resize HDR scene targets to " << framebufferWidth << 'x'
+                  << framebufferHeight << '\n';
+        return;
+    }
+    // BlackHole::resize recreates the lensing output target at the HDR scene resolution.
+    if (!application->blackHole.resize(application->postProcess.getWidth(),
+                                        application->postProcess.getHeight()))
+        std::cerr << "Failed to resize black-hole lensing target.\n";
 }
 
 void Application::applyQualitySettings() {
@@ -281,6 +411,15 @@ glm::vec3 Application::bodyPosition(int index, float time) const {
     const float period = ORBIT_BASE_SECONDS * std::pow(yearDays, ORBIT_COMPRESSION_EXPONENT);
     const float angle = time * 6.2831853f / period;
     return {body.orbit * std::cos(angle), 0, body.orbit * std::sin(angle)};
+}
+
+glm::vec3 Application::earthMoonPosition() const {
+    constexpr float twoPi = 6.2831853f;
+    const float earthPeriod = ORBIT_BASE_SECONDS;
+    const float moonAngle = simTime * twoPi * 12.0f / earthPeriod;
+    return bodyPosition(2, simTime) +
+           glm::vec3(EARTH_MOON_ORBIT_RADIUS * std::cos(moonAngle), 0.0f,
+                     EARTH_MOON_ORBIT_RADIUS * std::sin(moonAngle));
 }
 
 void Application::selectBody(int index) {
@@ -349,16 +488,20 @@ void Application::startMission(bool summonHole) {
     flying = false;
     freeFly = false;
     quizOpen = false;
+    quizWasPaused = false;
     quizAnswered = false;
     quizFinished = false;
     quizQuestionIndex = 0;
     quizScore = 0;
     quizChoice = -1;
+    flyElapsed = 0.0f;
     lightAngle = 0.0f;
     bloom = true;
     lensing = true;
-    instancing = false;
+    instancing = true;
     highQuality = true;
+    meteorsEnabled = true;
+    freeExploreSwallowedDismissed = false;
     applyQualitySettings();
     blackHole.setThreatSpeedMultiplier(threatSpeedMultiplier);
     fallbackThreat.setThreatSpeedMultiplier(threatSpeedMultiplier);
@@ -370,6 +513,11 @@ void Application::startMission(bool summonHole) {
 void Application::startFreeExplore() {
     startMission(false);
     gameState = GameState::FreeExplore;
+}
+
+void Application::returnToMenu() {
+    startMission(false);
+    gameState = GameState::StartScreen;
 }
 
 void Application::updateMission(float deltaTime) {
@@ -471,8 +619,12 @@ void Application::draw(const Body &body, const glm::mat4 &view, const glm::mat4 
         return;
     const float bodyRadius = sun ? 1.25f : body.radius;
     const float rotationAngle = simTime * 6.2831853f * ROTATION_SCALE / body.rotationPeriodDays;
+    const glm::mat4 axialTilt = !sun && body.name == "Saturn"
+                                    ? glm::rotate(glm::mat4(1.0f), glm::radians(27.0f),
+                                                  glm::vec3(1, 0, 0))
+                                    : glm::mat4(1.0f);
     const glm::mat4 baseTransform =
-        glm::translate(glm::mat4(1.0f), effect.position) * glm::mat4(effect.basis) *
+        glm::translate(glm::mat4(1.0f), effect.position) * glm::mat4(effect.basis) * axialTilt *
         glm::rotate(glm::mat4(1.0f), rotationAngle, glm::vec3(0, 1, 0));
     const glm::vec3 bodyScale(bodyRadius * effect.perpendicularScale,
                               bodyRadius * effect.perpendicularScale,
@@ -586,15 +738,20 @@ void Application::draw(const Body &body, const glm::mat4 &view, const glm::mat4 
     else {
         activeShader.set("color", body.color);
         activeShader.set("lightPos", lightPosition);
+        activeShader.set("sunLightPos", glm::vec3(0.0f));
         activeShader.set("cameraPos", currentCamera);
         activeShader.set("emissive", 0.0f);
+        const int textureIndex = surfaceTextureIndex(body.name);
+        activeShader.set("proceduralType", textureIndex);
+        activeShader.set("hasSurfaceTexture",
+                         worldTextures[static_cast<std::size_t>(textureIndex)].isLoaded() ? 1 : 0);
+        activeShader.set("surfaceTexture", 0);
+        worldTextures[static_cast<std::size_t>(textureIndex)].bind(0);
         const bool isSaturn = body.name == "Saturn";
         activeShader.set("ringEnabled", isSaturn ? 1 : 0);
         if (isSaturn) {
-            const glm::mat4 ringOrientation =
-                glm::mat4(effect.basis) *
-                glm::rotate(glm::mat4(1.0f), rotationAngle, glm::vec3(0, 1, 0)) *
-                glm::rotate(glm::mat4(1.0f), glm::radians(27.0f), glm::vec3(1, 0, 0));
+            // The fixed axial tilt sets Saturn's equatorial plane; spin does not wobble it.
+            const glm::mat4 ringOrientation = glm::mat4(effect.basis) * axialTilt;
             const glm::vec3 ringNormal =
                 glm::normalize(glm::vec3(ringOrientation * glm::vec4(0, 0, 1, 0)));
             activeShader.set("ringCenter", effect.position);
@@ -615,13 +772,16 @@ void Application::drawSaturnRing(const glm::mat4 &view, const glm::mat4 &project
         return;
 
     const float bodyRadius = saturn.radius;
-    const float rotationAngle = simTime * 6.2831853f * ROTATION_SCALE / saturn.rotationPeriodDays;
+    // The ring stays in the tilted equatorial plane; only Saturn's surface spins.
     const glm::mat4 orientation =
         glm::mat4(effect.basis) *
-        glm::rotate(glm::mat4(1.0f), rotationAngle, glm::vec3(0, 1, 0)) *
         glm::rotate(glm::mat4(1.0f), glm::radians(27.0f), glm::vec3(1, 0, 0));
+    const float ringAngle = simTime * kRingSpinSpeed;
+    // Spin around local +Z (the ring normal) before the fixed tilt and black-hole orientation.
+    const glm::mat4 ringSpin =
+        glm::rotate(glm::mat4(1.0f), ringAngle, glm::vec3(0, 0, 1));
     const glm::mat4 model =
-        glm::translate(glm::mat4(1.0f), effect.position) * orientation *
+        glm::translate(glm::mat4(1.0f), effect.position) * orientation * ringSpin *
         glm::scale(glm::mat4(1.0f),
                    glm::vec3(bodyRadius * effect.perpendicularScale,
                              bodyRadius * effect.perpendicularScale,
@@ -634,11 +794,13 @@ void Application::drawSaturnRing(const glm::mat4 &view, const glm::mat4 &project
     ringShader.set("view", view);
     ringShader.set("projection", projection);
     ringShader.set("lightPos", lightPosition);
+    ringShader.set("sunLightPos", glm::vec3(0.0f));
     ringShader.set("saturnCenter", effect.position);
     ringShader.set("ringNormal", glm::normalize(glm::vec3(orientation * glm::vec4(0, 0, 1, 0))));
     ringShader.set("saturnRadius", bodyRadius * effect.perpendicularScale);
     ringShader.set("innerRadius", 1.35f);
     ringShader.set("outerRadius", 2.6f);
+    ringShader.set("ringAngle", ringAngle);
     ringShader.set("opacity", effect.opacity);
     ringShader.set("hasRingTexture", saturnRingTexture.isLoaded() ? 1 : 0);
     ringShader.set("ringTexture", 0);
@@ -674,6 +836,214 @@ void Application::drawSaturnRing(const glm::mat4 &view, const glm::mat4 &project
     else
         glDisable(GL_BLEND);
     glActiveTexture(GL_TEXTURE0);
+}
+
+void Application::drawEarthMoon(const glm::mat4 &view, const glm::mat4 &projection) {
+    const BodyEffect effect = blackHole.affectBody(earthMoonPosition(), false);
+    if (effect.swallowed || effect.opacity <= 0.0f)
+        return;
+    constexpr float twoPi = 6.2831853f;
+    const float moonAngle = simTime * twoPi * 12.0f / ORBIT_BASE_SECONDS;
+    const float moonSpinAngle = -moonAngle - glm::radians(90.0f);
+    const glm::mat4 model =
+        glm::translate(glm::mat4(1.0f), effect.position) * glm::mat4(effect.basis) *
+        glm::rotate(glm::mat4(1.0f), moonSpinAngle, glm::vec3(0, 1, 0)) *
+        glm::scale(glm::mat4(1.0f),
+                   glm::vec3(EARTH_MOON_RADIUS * effect.perpendicularScale,
+                             EARTH_MOON_RADIUS * effect.perpendicularScale,
+                             EARTH_MOON_RADIUS * effect.axialScale));
+    shader.use();
+    shader.set("model", model);
+    shader.set("view", view);
+    shader.set("projection", projection);
+    shader.set("color", glm::vec3(0.57f, 0.57f, 0.54f));
+    shader.set("lightPos", glm::vec3(20.0f * (std::cos(lightAngle) - 1.0f), 0.0f,
+                                      20.0f * std::sin(lightAngle)));
+    shader.set("sunLightPos", glm::vec3(0.0f));
+    shader.set("cameraPos", currentCamera);
+    shader.set("emissive", 0.0f);
+    shader.set("opacity", effect.opacity);
+    shader.set("ringEnabled", 0);
+    shader.set("proceduralType", 7);
+    shader.set("hasSurfaceTexture", worldTextures[7].isLoaded() ? 1 : 0);
+    shader.set("surfaceTexture", 0);
+    worldTextures[7].bind(0);
+    (highQuality ? sphere : lowDetailSphere).draw();
+}
+
+void Application::drawMeteors(const glm::mat4 &view, const glm::mat4 &projection) {
+    if (!meteorsEnabled)
+        return;
+
+    GLint oldProgram = 0, oldVao = 0, oldSrcRgb = GL_ONE, oldDstRgb = GL_ZERO;
+    GLint oldSrcAlpha = GL_ONE, oldDstAlpha = GL_ZERO;
+    GLboolean oldDepthWrite = GL_TRUE;
+    const GLboolean oldDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean oldBlend = glIsEnabled(GL_BLEND);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &oldProgram);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &oldVao);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &oldSrcRgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &oldDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &oldSrcAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &oldDstAlpha);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &oldDepthWrite);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    const glm::vec3 cameraForward = glm::normalize(cameraTarget - currentCamera);
+    const glm::vec3 worldUp = std::abs(glm::dot(cameraForward, glm::vec3(0, 1, 0))) > 0.98f
+                                  ? glm::vec3(0, 0, 1)
+                                  : glm::vec3(0, 1, 0);
+    const glm::vec3 cameraRight = glm::normalize(glm::cross(cameraForward, worldUp));
+    const glm::vec3 cameraUp = glm::normalize(glm::cross(cameraRight, cameraForward));
+    const std::size_t meteorCount = highQuality ? meteors.size() : meteors.size() / 2;
+    meteorShader.use();
+    meteorShader.set("view", view);
+    meteorShader.set("projection", projection);
+    meteorShader.set("holePosition", blackHole.getPosition());
+    meteorShader.set("progress", blackHole.getThreatProgress());
+    meteorShader.set("horizonRadius", blackHole.getHorizonRadius());
+    meteorShader.set("pullRadius", blackHole.getPullRadius());
+    meteorShader.set("maximumPullStrength", blackHole.getMaxPullStrength());
+    meteorShader.set("maximumBodyStretch", blackHole.getMaxBodyStretch());
+    meteorShader.set("stretchInfluenceRadius", blackHole.getStretchInfluenceRadius());
+    meteorShader.set("activationThreshold", blackHole.getBodyActivationThreshold());
+    meteorShader.set("drawTail", 1);
+    for (std::size_t i = 0; i < meteorCount; ++i) {
+        const Meteor &meteor = meteors[i];
+        // Accumulated simulation time freezes with pause and responds to speed changes.
+        const float phase = std::fmod(meteor.phase + simTime * meteor.speed / 32.0f, 1.0f);
+        const glm::vec3 position = meteor.start + meteor.direction * (phase * 72.0f);
+        glm::vec3 tailDirection = -meteor.direction;
+        tailDirection -= cameraForward * glm::dot(tailDirection, cameraForward);
+        if (glm::dot(tailDirection, tailDirection) < 0.0001f)
+            tailDirection = cameraUp;
+        tailDirection = glm::normalize(tailDirection);
+        const glm::vec3 tailSide = glm::normalize(glm::cross(cameraForward, tailDirection));
+        meteorShader.set("center", position);
+        meteorShader.set("tailDirection", tailDirection);
+        meteorShader.set("tailSide", tailSide);
+        meteorShader.set("tailLength", 0.9f + meteor.radius * 12.0f);
+        meteorShader.set("tailWidth", meteor.radius * 0.34f);
+        meteorShader.set("color", meteor.color);
+        glBindVertexArray(meteorQuadVao);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        meteorShader.set("drawTail", 0);
+        const glm::mat4 model = glm::translate(glm::mat4(1.0f), position) *
+                                glm::scale(glm::mat4(1.0f), glm::vec3(meteor.radius));
+        meteorShader.set("model", model);
+        meteorShader.set("color", meteor.color);
+        sphere.draw();
+        meteorShader.set("drawTail", 1);
+    }
+
+    glDepthMask(oldDepthWrite);
+    if (oldDepthTest)
+        glEnable(GL_DEPTH_TEST);
+    else
+        glDisable(GL_DEPTH_TEST);
+    glBlendFuncSeparate(static_cast<GLenum>(oldSrcRgb), static_cast<GLenum>(oldDstRgb),
+                        static_cast<GLenum>(oldSrcAlpha), static_cast<GLenum>(oldDstAlpha));
+    if (oldBlend)
+        glEnable(GL_BLEND);
+    else
+        glDisable(GL_BLEND);
+    glUseProgram(static_cast<GLuint>(oldProgram));
+    glBindVertexArray(static_cast<GLuint>(oldVao));
+}
+
+void Application::drawAsteroids(const glm::mat4 &view, const glm::mat4 &projection) {
+    const std::size_t count = std::min(asteroids.size(),
+                                       highQuality ? ASTEROID_COUNT_HIGH : ASTEROID_COUNT_LOW);
+    if (count == 0)
+        return;
+    struct InstanceData {
+        glm::mat4 model;
+        glm::vec4 color;
+    };
+    std::vector<InstanceData> instances;
+    instances.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const Asteroid &asteroid = asteroids[i];
+        const float angle = asteroid.angle + simTime * asteroid.angularSpeed;
+        const glm::vec3 position(asteroid.orbitRadius * std::cos(angle), asteroid.verticalOffset,
+                                 asteroid.orbitRadius * std::sin(angle));
+        const glm::mat4 model = glm::translate(glm::mat4(1.0f), position) *
+                                glm::rotate(glm::mat4(1.0f), angle * 1.7f, glm::vec3(1, 1, 0)) *
+                                glm::scale(glm::mat4(1.0f), glm::vec3(asteroid.size));
+        instances.push_back({model, glm::vec4(asteroid.color, 1.0f)});
+    }
+
+    glm::vec3 planetPositions[9];
+    float planetRadii[9];
+    int planetCount = 0;
+    for (int i = 0; i <= 8; ++i) {
+        const BodyEffect effect = bodyEffect(i);
+        if (effect.swallowed || effect.opacity <= 0.0f)
+            continue;
+        const float radius = i == 8 ? 1.25f : bodies[static_cast<std::size_t>(i)].radius;
+        planetPositions[planetCount] = effect.position;
+        planetRadii[planetCount] = radius * std::max(effect.axialScale, effect.perpendicularScale);
+        ++planetCount;
+    }
+
+    asteroidShader.use();
+    asteroidShader.set("view", view);
+    asteroidShader.set("projection", projection);
+    asteroidShader.set("lightPosition", glm::vec3(20.0f * (std::cos(lightAngle) - 1.0f),
+                                                    0.0f, 20.0f * std::sin(lightAngle)));
+    asteroidShader.set("cameraPosition", currentCamera);
+    asteroidShader.set("holePosition", blackHole.getPosition());
+    asteroidShader.set("progress", blackHole.getThreatProgress());
+    asteroidShader.set("horizonRadius", blackHole.getHorizonRadius());
+    asteroidShader.set("pullRadius", blackHole.getPullRadius());
+    asteroidShader.set("maximumPullStrength", blackHole.getMaxPullStrength());
+    asteroidShader.set("maximumBodyStretch", blackHole.getMaxBodyStretch());
+    asteroidShader.set("stretchInfluenceRadius", blackHole.getStretchInfluenceRadius());
+    asteroidShader.set("activationThreshold", blackHole.getBodyActivationThreshold());
+    asteroidShader.set("planetCount", planetCount);
+    const GLint positionsLocation = glGetUniformLocation(asteroidShader.id, "planetPositions[0]");
+    const GLint radiiLocation = glGetUniformLocation(asteroidShader.id, "planetRadii[0]");
+    if (planetCount > 0) {
+        glUniform3fv(positionsLocation, planetCount, &planetPositions[0].x);
+        glUniform1fv(radiiLocation, planetCount, planetRadii);
+    }
+
+    GLint oldVao = 0, oldArrayBuffer = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &oldVao);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &oldArrayBuffer);
+    if (instancing) {
+        glBindVertexArray(asteroidMesh.vao);
+        glBindBuffer(GL_ARRAY_BUFFER, asteroidInstanceVbo);
+        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instances.size() * sizeof(InstanceData)),
+                     instances.data(), GL_STREAM_DRAW);
+        for (GLuint column = 0; column < 4; ++column) {
+            glVertexAttribPointer(3 + column, 4, GL_FLOAT, GL_FALSE, sizeof(InstanceData),
+                                  reinterpret_cast<void *>(static_cast<std::uintptr_t>(column * 4 * sizeof(float))));
+        }
+        glVertexAttribPointer(7, 4, GL_FLOAT, GL_FALSE, sizeof(InstanceData),
+                              reinterpret_cast<void *>(sizeof(glm::mat4)));
+        glEnableVertexAttribArray(7);
+        glVertexAttribDivisor(7, 1);
+        asteroidShader.set("useInstance", 1);
+        glDrawElementsInstanced(GL_TRIANGLES, asteroidMesh.count, GL_UNSIGNED_INT, nullptr,
+                                static_cast<GLsizei>(count));
+        asteroidDrawCalls = 1;
+    } else {
+        asteroidShader.set("useInstance", 0);
+        asteroidDrawCalls = 0;
+        for (const InstanceData &instance : instances) {
+            asteroidShader.set("model", instance.model);
+            asteroidShader.set("baseColor", glm::vec3(instance.color));
+            asteroidMesh.draw();
+            ++asteroidDrawCalls;
+        }
+    }
+    glBindVertexArray(static_cast<GLuint>(oldVao));
+    glBindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(oldArrayBuffer));
 }
 
 void Application::drawSky(const glm::mat4 &view, const glm::mat4 &projection) {
@@ -717,6 +1087,7 @@ void Application::input(float deltaTime) {
     const bool g = glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS;
     const bool l = glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS;
     const bool i = glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS;
+    const bool m = glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS;
     const bool q = glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS;
     const bool b = glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS;
     const bool f1 = glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS;
@@ -735,6 +1106,10 @@ void Application::input(float deltaTime) {
         instancing = !instancing;
         std::cout << "Instancing: " << (instancing ? "ON" : "OFF") << '\n';
     }
+    if (m && !lastMDown) {
+        meteorsEnabled = !meteorsEnabled;
+        std::cout << "Meteors: " << (meteorsEnabled ? "ON" : "OFF") << '\n';
+    }
     if (q && !lastQDown) {
         highQuality = !highQuality;
         applyQualitySettings();
@@ -742,18 +1117,23 @@ void Application::input(float deltaTime) {
     }
     if (b && !lastBDown) {
         if (gameState == GameState::Mission || gameState == GameState::FreeExplore) {
-            if (blackHole.isIdle())
+            if (blackHole.isIdle()) {
+                freeExploreSwallowedDismissed = false;
                 blackHole.summon();
-            else
+            } else {
                 blackHole.returnBack();
+            }
         }
     }
     if ((f1 && !lastF1Down) || (h && !lastHDown))
         help = !help;
     if (r && !lastRDown) {
-        if (gameState == GameState::FreeExplore)
-            blackHole.returnBack();
-        else if (gameState == GameState::Mission || gameState == GameState::Won ||
+        if (gameState == GameState::FreeExplore) {
+            if (blackHole.isSunSwallowed())
+                startFreeExplore();
+            else
+                blackHole.returnBack();
+        } else if (gameState == GameState::Mission || gameState == GameState::Won ||
                  gameState == GameState::Lost)
             startMission();
     }
@@ -762,6 +1142,7 @@ void Application::input(float deltaTime) {
     lastGDown = g;
     lastLDown = l;
     lastIDown = i;
+    lastMDown = m;
     lastQDown = q;
     lastBDown = b;
     lastF1Down = f1;
@@ -833,11 +1214,12 @@ void Application::input(float deltaTime) {
     const bool left = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
     const bool gameplayActive =
         gameState == GameState::Mission || gameState == GameState::FreeExplore;
-    if (left && !lastLeftDown && !overUi && !quizOpen && gameplayActive) {
-        int windowWidth = 1, windowHeight = 1;
-        glfwGetWindowSize(window, &windowWidth, &windowHeight);
-        const float ndcX = 2.0f * static_cast<float>(x) / static_cast<float>(windowWidth) - 1.0f;
-        const float ndcY = 1.0f - 2.0f * static_cast<float>(y) / static_cast<float>(windowHeight);
+    if (left && !lastLeftDown && !overUi && !quizOpen && gameplayActive &&
+        windowWidth > 0 && windowHeight > 0 && width > 0 && height > 0) {
+        const float framebufferX = static_cast<float>(x) * width / windowWidth;
+        const float framebufferY = static_cast<float>(y) * height / windowHeight;
+        const float ndcX = 2.0f * framebufferX / static_cast<float>(width) - 1.0f;
+        const float ndcY = 1.0f - 2.0f * framebufferY / static_cast<float>(height);
         const glm::mat4 projection =
             glm::perspective(glm::radians(45.0f), static_cast<float>(width) / height, 0.1f, 100.0f);
         const glm::mat4 view = glm::lookAt(currentCamera, cameraTarget, glm::vec3(0, 1, 0));
@@ -884,6 +1266,7 @@ void Application::run() {
         const float dt = std::clamp(now - last, 0.0f, 0.05f);
         last = now;
         glfwGetFramebufferSize(window, &width, &height);
+        glfwGetWindowSize(window, &windowWidth, &windowHeight);
         if (width == 0 || height == 0) {
             glfwWaitEvents();
             continue;
@@ -904,8 +1287,11 @@ void Application::run() {
         const float threatDeltaTime = !paused && !quizOpen ? dt * static_cast<float>(speed) : 0.0f;
         if (gameState == GameState::Mission)
             updateMission(threatDeltaTime);
-        else if (gameState == GameState::FreeExplore)
+        else if (gameState == GameState::FreeExplore) {
             blackHole.update(threatDeltaTime);
+            if (blackHole.isSunSwallowed())
+                paused = true;
+        }
         if (selected >= 0 && bodyEffect(selected).swallowed) {
             selected = -1;
             distance = overviewDistance;
@@ -948,23 +1334,31 @@ void Application::run() {
         orbitShader.use();
         orbitShader.set("view", view);
         orbitShader.set("projection", projection);
+        GLboolean oldOrbitDepthWrite = GL_TRUE;
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &oldOrbitDepthWrite);
+        glDepthMask(GL_FALSE);
         glDisable(GL_CULL_FACE);
         for (std::size_t i = 0; i < bodies.size(); ++i) {
             orbitShader.set("model", glm::mat4(1));
             orbitShader.set("color", glm::vec3(0.26f, 0.31f, 0.42f));
             orbitLines[i].drawOrbit();
         }
+        const BodyEffect earthEffect = bodyEffect(2);
+        orbitShader.set("model", glm::translate(glm::mat4(1.0f), earthEffect.position));
+        orbitShader.set("color", glm::vec3(0.38f, 0.48f, 0.64f));
+        earthMoonOrbitLine.drawOrbit();
         if (selected >= 0) {
             const glm::vec3 position = bodyEffect(selected).position;
             const float radius =
                 selected == 8 ? 1.25f : bodies[static_cast<std::size_t>(selected)].radius;
             const glm::mat4 ringModel =
-                glm::translate(glm::mat4(1), position + glm::vec3(0, radius * 1.15f, 0)) *
+                glm::translate(glm::mat4(1), position) *
                 glm::scale(glm::mat4(1), glm::vec3(radius * 1.35f, 1, radius * 1.35f));
             orbitShader.set("model", ringModel);
             orbitShader.set("color", glm::vec3(1.0f, 0.85f, 0.25f));
             highlightRing.drawOrbit();
         }
+        glDepthMask(oldOrbitDepthWrite);
         glEnable(GL_CULL_FACE);
         shader.use();
         shader.set("view", view);
@@ -976,8 +1370,11 @@ void Application::run() {
         sunShader.set("view", view);
         sunShader.set("projection", projection);
         draw(sunBody, view, projection, true);
+        drawEarthMoon(view, projection);
         blackHole.draw(view, projection, currentCamera, simTime);
         drawSaturnRing(view, projection);
+        drawAsteroids(view, projection);
+        drawMeteors(view, projection);
 
         postProcess.endScene();
         const GLuint hdrSceneTexture = postProcess.getHdrSceneColorTexture();
@@ -989,8 +1386,8 @@ void Application::run() {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        ImGui::SetNextWindowPos(ImVec2(static_cast<float>(width) - 350.0f, 0), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(350, static_cast<float>(height)), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(static_cast<float>(windowWidth) - 350.0f, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(350, static_cast<float>(windowHeight)), ImGuiCond_Always);
         ImGui::Begin("Mission Control", nullptr,
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
         ImGui::Text("Team: Your Team");
@@ -1010,6 +1407,9 @@ void Application::run() {
                     MISSION_TARGET_SCORE);
         ImGui::Text("Bloom %s | Instancing %s", bloom ? "ON" : "OFF",
                     instancing ? "ON" : "OFF");
+        ImGui::Text("Meteors: %s", meteorsEnabled ? "ON" : "OFF");
+        ImGui::Text("Asteroids: %zu | draw calls: %d",
+                    highQuality ? ASTEROID_COUNT_HIGH : ASTEROID_COUNT_LOW, asteroidDrawCalls);
         ImGui::Text("Lensing: %s", lensing ? "ON" : "OFF");
         ImGui::Text("Quality: %s | Black hole: %s p=%.0f%% | Light %.1f deg",
                     highQuality ? "High" : "Low", blackHole.getStateName(),
@@ -1039,7 +1439,10 @@ void Application::run() {
             ImGui::Text("Orbital period: %.2f days", b.orbitalDays);
             ImGui::Text("Rotation period: %.3f days", b.rotationPeriodDays);
             ImGui::Text("Gravity: %.2f m/s^2", b.gravity);
-            ImGui::Text("Moons: %d", b.moons);
+            if (b.name == "Earth")
+                ImGui::TextUnformatted("Earth: 1 moon");
+            else
+                ImGui::Text("Moons: %d", b.moons);
             for (const std::string &fact : b.facts)
                 ImGui::BulletText("%s", fact.c_str());
             if (ImGui::Button("Start Quiz"))
@@ -1066,8 +1469,11 @@ void Application::run() {
             ImGui::Text("Space: pause simulation");
             ImGui::Text("1 / 2 / 3: simulation speed 1x / 5x / 10x");
             ImGui::Text("G: toggle bloom state | L: toggle lensing state");
-            ImGui::Text("I: toggle instancing state | Q: toggle high / low sphere quality");
-            ImGui::Text("B: summon / return black hole | R: return in Free Explore / restart mission");
+            ImGui::Text("I: toggle asteroid instancing | Q: toggle high / low quality");
+            ImGui::Text("M: toggle meteors");
+            ImGui::Text("Planet maps are optional; procedural surfaces and Earth's Moon work without files");
+            ImGui::Text("B: summon / return black hole | R: return or restart after swallow in Free Explore");
+            ImGui::Text("R restarts an active or finished Mission; Free Explore ending offers Restart / Keep watching");
             ImGui::Text("F: toggle free-fly | [ / ]: rotate Sun light");
             ImGui::Text("Esc: clear selection / return to overview");
             ImGui::Text("F12: save screenshot");
@@ -1077,7 +1483,8 @@ void Application::run() {
         }
         if (gameState == GameState::StartScreen) {
             ImGui::SetNextWindowPos(
-                ImVec2(static_cast<float>(width) * 0.5f, static_cast<float>(height) * 0.5f),
+                ImVec2(static_cast<float>(windowWidth) * 0.5f,
+                       static_cast<float>(windowHeight) * 0.5f),
                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
             ImGui::Begin("Solar System Explorer", nullptr,
                          ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
@@ -1091,7 +1498,8 @@ void Application::run() {
         }
         if (gameState == GameState::Won || gameState == GameState::Lost) {
             ImGui::SetNextWindowPos(
-                ImVec2(static_cast<float>(width) * 0.5f, static_cast<float>(height) * 0.5f),
+                ImVec2(static_cast<float>(windowWidth) * 0.5f,
+                       static_cast<float>(windowHeight) * 0.5f),
                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
             ImGui::Begin("Mission Result", nullptr,
                          ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
@@ -1100,6 +1508,23 @@ void Application::run() {
             ImGui::Text("Final score: %d / %d", missionScore, MISSION_TARGET_SCORE);
             if (ImGui::Button("Restart", ImVec2(220, 0)))
                 startMission();
+            if (gameState == GameState::Lost && ImGui::Button("Back to menu", ImVec2(220, 0)))
+                returnToMenu();
+            ImGui::End();
+        }
+        if (gameState == GameState::FreeExplore && blackHole.isSunSwallowed() &&
+            !freeExploreSwallowedDismissed) {
+            ImGui::SetNextWindowPos(
+                ImVec2(static_cast<float>(windowWidth) * 0.5f,
+                       static_cast<float>(windowHeight) * 0.5f),
+                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::Begin("Free Explore Ending", nullptr,
+                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+            ImGui::TextUnformatted("The Sun was swallowed");
+            if (ImGui::Button("Restart", ImVec2(220, 0)))
+                startFreeExplore();
+            if (ImGui::Button("Keep watching", ImVec2(220, 0)))
+                freeExploreSwallowedDismissed = true;
             ImGui::End();
         }
         if (quizOpen) {

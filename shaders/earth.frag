@@ -47,16 +47,33 @@ float fbm(vec3 p) {
     return value;
 }
 
-vec3 proceduralLandColor(vec3 p) {
-    // FBM supplies broad continents; a second scale breaks the coast and varies land color.
-    float continents = fbm(p * 3.8 + vec3(11.0, 2.0, 7.0));
-    float land = smoothstep(0.47, 0.57, continents);
-    float detail = fbm(p * 18.0 + vec3(3.0, 8.0, 1.0));
-    vec3 ocean = vec3(0.012, 0.08, 0.30);
-    vec3 greenLand = vec3(0.09, 0.30, 0.10);
-    vec3 dryLand = vec3(0.42, 0.30, 0.16);
-    vec3 landColor = mix(greenLand, dryLand, smoothstep(0.48, 0.66, detail));
-    return mix(ocean, landColor, land);
+vec3 proceduralEarth(vec3 p, out float landMask, out float oceanMask) {
+    // A low-frequency FBM field gives connected continental shapes instead of isolated spots.
+    float continents = fbm(p * 2.7 + vec3(11.0, 2.0, 7.0));
+    const float seaLevel = 0.50;
+    landMask = smoothstep(seaLevel - 0.025, seaLevel + 0.035, continents);
+    oceanMask = 1.0 - landMask;
+    float height = smoothstep(seaLevel + 0.02, 0.78, continents);
+    float terrain = fbm(p * 15.0 + vec3(3.0, 8.0, 1.0));
+    float latitude = abs(p.y);
+
+    // Coast color approaches pale cyan at sea level and deepens offshore.
+    float coast = 1.0 - smoothstep(0.0, 0.10, seaLevel - continents);
+    vec3 deepOcean = vec3(0.008, 0.035, 0.17);
+    vec3 shallowOcean = vec3(0.12, 0.72, 0.82);
+    vec3 ocean = mix(deepOcean, shallowOcean, coast * oceanMask);
+
+    vec3 lowland = mix(vec3(0.10, 0.34, 0.12), vec3(0.47, 0.43, 0.21),
+                       smoothstep(0.42, 0.68, terrain));
+    vec3 highland = mix(vec3(0.37, 0.25, 0.12), vec3(0.68, 0.62, 0.48),
+                        smoothstep(0.48, 0.72, terrain));
+    vec3 land = mix(lowland, highland, smoothstep(0.18, 0.68, height));
+    float dryEquator = (1.0 - smoothstep(0.17, 0.38, latitude)) *
+                       smoothstep(0.52, 0.64, terrain);
+    land = mix(land, vec3(0.72, 0.58, 0.30), dryEquator * (1.0 - height));
+    land = mix(land, vec3(0.92, 0.94, 0.98), smoothstep(0.72, 0.86, height));
+    land = mix(land, vec3(0.84, 0.91, 0.97), smoothstep(0.82, 0.94, latitude));
+    return mix(ocean, land, landMask);
 }
 
 void main() {
@@ -92,19 +109,24 @@ void main() {
         surfaceNormal = normalize(mat3(tangent, bitangent, N) * mapped);
     }
 
-    vec3 dayColor = hasDayTexture ? texture(dayTexture, uv).rgb : proceduralLandColor(localPos);
+    float landMask = 0.0;
+    float oceanMask = 0.0;
+    vec3 proceduralColor = proceduralEarth(localPos, landMask, oceanMask);
+    vec3 dayColor = hasDayTexture ? texture(dayTexture, uv).rgb : proceduralColor;
     float cityNoise = fbm(localPos * 72.0 + vec3(31.0, 4.0, 17.0));
-    float cityLights = smoothstep(0.68, 0.79, cityNoise) * 2.4;
+    float cityLights = smoothstep(0.68, 0.79, cityNoise) * landMask * 2.4;
     vec3 nightColor = hasNightTexture
-                          ? texture(nightTexture, uv).rgb * 1.8
+                          ? texture(nightTexture, uv).rgb * landMask * 1.8
                           : dayColor * 0.035 + vec3(1.0, 0.55, 0.15) * cityLights;
 
     // N dot L is the cosine of the sun angle; smoothstep softens the day/night terminator.
     float dayFactor = smoothstep(-0.12, 0.12, dot(surfaceNormal, L));
     vec3 albedo = mix(nightColor, dayColor, dayFactor);
     float diffuse = max(dot(surfaceNormal, L), 0.0);
-    float specularMask = hasSpecularTexture ? texture(specularTexture, uv).r : 0.28;
-    float specular = pow(max(dot(surfaceNormal, normalize(L + V)), 0.0), 48.0) * specularMask;
-    vec3 lit = albedo * (0.10 + 0.90 * diffuse) + vec3(0.25) * specular;
+    float specularMap = hasSpecularTexture ? texture(specularTexture, uv).r : 0.42;
+    float specularMask = specularMap * oceanMask;
+    // Blinn-Phong highlights are restricted to ocean, keeping procedural land matte.
+    float specular = pow(max(dot(surfaceNormal, normalize(L + V)), 0.0), 56.0) * specularMask;
+    vec3 lit = albedo * (0.10 + 0.90 * diffuse) + vec3(0.42, 0.50, 0.62) * specular;
     FragColor = vec4(lit * opacity, 1.0);
 }

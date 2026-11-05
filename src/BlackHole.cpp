@@ -7,10 +7,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace {
-constexpr float MAX_BODY_STRETCH = 4.0f;
-constexpr float PULL_RADIUS = 8.0f;
-constexpr float MAX_PULL_STRENGTH = 8.0f;
-
 float smoothUnit(float value) {
     const float x = std::clamp(value, 0.0f, 1.0f);
     return x * x * (3.0f - 2.0f * x);
@@ -134,7 +130,7 @@ void BlackHole::update(float deltaTime) {
         return;
     const float easing = 1.0f - std::exp(-3.0f * deltaTime);
     speedMultiplier += (targetSpeedMultiplier - speedMultiplier) * easing;
-    const float step = deltaTime * speedMultiplier / TRANSITION_SECONDS;
+    const float step = deltaTime * speedMultiplier / kSwallowSecondsAtOneX;
     if (state == BlackHoleState::Approaching || state == BlackHoleState::Consuming) {
         progress = std::min(progress + step, 1.0f);
         if (progress >= 1.0f)
@@ -202,6 +198,30 @@ float BlackHole::getVisibility() const {
     return smoothUnit(progress / 0.12f);
 }
 
+float BlackHole::getHorizonRadius() const {
+    return EVENT_HORIZON_RADIUS;
+}
+
+float BlackHole::getPullRadius() const {
+    return PULL_RADIUS;
+}
+
+float BlackHole::getMaxPullStrength() const {
+    return MAX_PULL_STRENGTH;
+}
+
+float BlackHole::getMaxBodyStretch() const {
+    return MAX_BODY_STRETCH;
+}
+
+float BlackHole::getStretchInfluenceRadius() const {
+    return DISK_OUTER_RADIUS;
+}
+
+float BlackHole::getBodyActivationThreshold() const {
+    return BODY_ACTIVATION_THRESHOLD;
+}
+
 BodyEffect BlackHole::affectBody(const glm::vec3 &orbitPosition, bool sun) const {
     BodyEffect result;
     result.position = orbitPosition;
@@ -212,7 +232,7 @@ BodyEffect BlackHole::affectBody(const glm::vec3 &orbitPosition, bool sun) const
     const glm::vec3 towardHole = holePosition - orbitPosition;
     const float distance = glm::length(towardHole);
 
-    const float threshold = sun ? 0.92f : 0.10f;
+    const float threshold = sun ? 0.92f : BODY_ACTIVATION_THRESHOLD;
     const float activation = smoothBetween(threshold, 1.0f, progress);
     const float pullStrength = MAX_PULL_STRENGTH * activation;
     const float pullWeight =
