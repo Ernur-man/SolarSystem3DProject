@@ -21,9 +21,9 @@ GLFW (Zlib/libpng), GLAD (MIT), GLM (Happy Bunny and MIT), Dear ImGui (MIT), stb
 ## Controls
 
 - `Space`: pause or resume simulation; `1` / `2` / `3`: simulation speed 1x / 5x / 10x.
-- `G`: toggle bloom rendering (the HDR and tone-mapping path remains active); `L`: toggle Lensing HUD state; `I`: toggle Instancing HUD state.
+- `G`: toggle bloom rendering (the HDR and tone-mapping path remains active); `L`: toggle screen-space gravitational lensing; `I`: toggle the Instancing HUD state.
 - `Q`: switch High / Low quality. High uses full-resolution HDR, eight blur iterations, and 32 x 48 sphere segments; Low uses 0.75-resolution HDR, four blur iterations, and 8 x 12 sphere segments. `B` summons the black hole or reverses it back out of the system.
-- `R`: restart an active or finished mission; `F`: toggle free-fly; `[` / `]`: rotate the Sun light direction.
+- `R`: return the hole in Free Explore, or restart an active/finished mission (reset then automatic approach); `F`: toggle free-fly; `[` / `]`: rotate the Sun light direction.
 - `Esc`: clear selection and smoothly return to the overview; `F12`: save a PNG in `screenshots/`.
 - `F1` or `H`: show or hide the complete controls overlay.
 - Left click or select a name in Mission Control: select a planet or the Sun and fly to it. Right mouse drag rotates the camera; the wheel zooms.
@@ -38,10 +38,10 @@ The window can be resized and safely handles a minimized framebuffer. Team name 
 
 ## Feature status
 
-**Done:** Steps 1–7 and 9–12: orbit line loops; orbit and free-fly cameras; ray-sphere selection; eased fly-to/follow; planet information and quiz; a start screen with Free Explore and Mission; a fallback threat, scoring, terminal states, and restart; movable Sun light; help overlay; PNG screenshots; and OpenGL debug output in debug builds. HDR scene rendering, bright-pass plus separable Gaussian bloom, ACES tone mapping, and final sRGB conversion are implemented. `G` enables or disables only the bloom contribution. `Q` switches HDR render scale, blur iterations, and sphere detail. The black-hole visuals include a pure-black event horizon and animated, tilted, procedural accretion disk; `B` smoothly summons or returns them.
+**Done:** The gameplay/camera module, HDR and bloom pipeline, and black-hole module: orbit/free-fly cameras, picking and fly-to, planet info and quiz, mission score/win/lose/restart, HDR bright-pass and Gaussian bloom, ACES tone mapping, and sRGB output. The black-hole module includes the Idle/Approaching/Consuming/Returning threat state machine, eased body pull/stretch/swallow effects, the event horizon and procedural accretion disk, and a screen-space gravitational lensing pass. Mission mode summons the hole automatically; Free Explore starts with it Idle. `B` summons or returns the hole, `R` restarts the mission, and `L` toggles lensing. `G` toggles only the bloom contribution; `Q` changes HDR scale, blur iterations, and sphere detail.
 
-**Partial:** `L` and `I` still change HUD state only; lensing and instancing are not implemented here. The black-hole animation is a visual transition and does not replace or control the separate fallback mission threat. Bloom quality toggles and HDR/tone mapping are implemented; lensing, instancing, decorative planetary rings, and detailed planet surfaces remain outside this module. Scene sizes and distances are stylized.
+**Partial:** `I` changes HUD state only; instancing is not implemented. The old timer threat remains as an explicitly marked fallback alternative; the real black hole is selected by default. Scene sizes and distances are stylized, and the lensing/spaghettification are illustrative screen-space and transform effects rather than a physical simulation.
 
-**Missing:** None of steps 7–12 are missing from this gameplay/UI module. The event horizon and accretion disk are visual-only; the fallback threat remains the mission's scoring/loss authority.
+**Missing:** No requested black-hole module items are missing. Decorative planetary rings and instancing are outside this module.
 
 Build uses CMake FetchContent and requires dependency sources at configure time. A successful clean-source verification is reported with the project handoff, not assumed from this README.

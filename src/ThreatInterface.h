@@ -12,6 +12,7 @@ public:
     virtual void reset() = 0;
 };
 
+// Optional legacy mission timer, retained as a fallback if the real BlackHole is unavailable.
 class FallbackThreat final : public ThreatInterface {
 public:
     void setThreatSpeedMultiplier(float multiplier) override {

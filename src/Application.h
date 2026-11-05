@@ -2,6 +2,7 @@
 #include "Shader.h"
 #include "Mesh.h"
 #include "Texture.h"
+#include "BlackHole.h"
 #include "ThreatInterface.h"
 #include "PostProcess.h"
 #include <GLFW/glfw3.h>
@@ -43,12 +44,8 @@ private:
     Shader sunShader;
     Shader skyShader;
     Shader orbitShader;
-    Shader blackHoleShader;
-    Shader diskShader;
     Mesh sphere;
     Mesh lowDetailSphere;
-    Mesh blackHoleSphere;
-    Mesh accretionDisk;
     std::vector<Mesh> orbitLines;
     Mesh highlightRing;
     Texture skyTexture;
@@ -57,7 +54,8 @@ private:
     Body sunBody;
     std::vector<QuizQuestion> questions;
     std::vector<std::size_t> quizRound;
-    FallbackThreat threat;
+    BlackHole blackHole;
+    FallbackThreat fallbackThreat; // Legacy alternative; the real black hole is selected by default.
 
     int width = 1280;
     int height = 720;
@@ -79,9 +77,7 @@ private:
     bool lensing = true;
     bool instancing = false;
     bool highQuality = true;
-    bool blackHoleEnabled = false;
-    float blackHoleProgress = 0.0f;
-    float blackHoleTime = 0.0f;
+    bool useFallbackThreat = false;
     bool paused = false;
     bool help = false;
     bool freeFly = false;
@@ -121,7 +117,7 @@ private:
     glm::vec3 bodyPosition(int index, float time) const;
     bool loadData();
     void beginQuiz();
-    void startMission();
+    void startMission(bool summonHole = true);
     void startFreeExplore();
     void updateMission(float deltaTime);
     void recordVisit(int index);
@@ -130,4 +126,6 @@ private:
     void draw(const Body &body, bool sun = false);
     void drawSky(const glm::mat4 &view, const glm::mat4 &projection);
     void applyQualitySettings();
+    ThreatInterface &activeThreat();
+    BodyEffect bodyEffect(int index) const;
 };

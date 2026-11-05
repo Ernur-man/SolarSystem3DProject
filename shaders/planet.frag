@@ -9,6 +9,7 @@ uniform vec3 color;
 uniform vec3 lightPos;
 uniform vec3 cameraPos;
 uniform float emissive;
+uniform float opacity;
 
 void main() {
     // Blinn-Phong diffuse plus a 32-power half-vector highlight and ambient fill.
@@ -18,5 +19,6 @@ void main() {
     float d = max(dot(N, L), 0.0);
     float s = pow(max(dot(N, normalize(L + V)), 0.0), 32.0);
     vec3 lit = color * (0.12 + 0.88 * d) + vec3(0.22) * s;
-    FragColor = vec4(lit + color * emissive, 1.0);
+    // opacity fades the body's linear radiance without changing its opaque depth coverage.
+    FragColor = vec4((lit + color * emissive) * opacity, 1.0);
 }
