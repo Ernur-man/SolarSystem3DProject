@@ -92,6 +92,12 @@ Application::~Application() {
     blackHole.release();
     postProcess.release();
     skyTexture.release();
+    earthDayTexture.release();
+    earthNightTexture.release();
+    earthCloudTexture.release();
+    earthNormalTexture.release();
+    earthSpecularTexture.release();
+    saturnRingTexture.release();
     if (window) {
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
@@ -218,10 +224,20 @@ bool Application::init() {
     highlightRing.makeOrbit(1.0f);
     if (!shader.load("shaders/planet.vert", "shaders/planet.frag") ||
         !sunShader.load("shaders/planet.vert", "shaders/sun.frag") ||
+        !earthShader.load("shaders/earth.vert", "shaders/earth.frag") ||
+        !atmosphereShader.load("shaders/atmosphere.vert", "shaders/atmosphere.frag") ||
+        !ringShader.load("shaders/ring.vert", "shaders/ring.frag") ||
         !skyShader.load("shaders/sky.vert", "shaders/sky.frag") ||
         !orbitShader.load("shaders/orbit.vert", "shaders/orbit.frag"))
         return false;
-    skyTexture.load("assets/textures/stars_milky_way.jpg");
+    skyTexture.load("assets/textures/stars_milky_way.jpg", true, "procedural starfield");
+    earthDayTexture.load("assets/textures/earth_day.jpg", true, "procedural Earth surface");
+    earthNightTexture.load("assets/textures/earth_night.jpg", true, "procedural city lights");
+    earthCloudTexture.load("assets/textures/earth_clouds.jpg", true, "procedural clouds");
+    earthNormalTexture.load("assets/textures/earth_normal.jpg", false, "geometric normals");
+    earthSpecularTexture.load("assets/textures/earth_specular.jpg", false,
+                              "constant ocean and land specular values");
+    saturnRingTexture.load("assets/textures/saturn_ring.png", true, "procedural ring bands");
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
@@ -243,6 +259,7 @@ bool Application::init() {
     glfwGetFramebufferSize(window, &width, &height);
     if (!postProcess.initialize(width, height, highQuality ? 1.0f : 0.75f))
         return false;
+    saturnRing.makeRing(1.35f, 2.6f);
     return blackHole.initialize(postProcess.getWidth(), postProcess.getHeight());
 }
 
@@ -446,18 +463,120 @@ void Application::saveScreenshot() {
     }
 }
 
-void Application::draw(const Body &body, bool sun) {
+void Application::draw(const Body &body, const glm::mat4 &view, const glm::mat4 &projection,
+                       bool sun) {
     const int index = sun ? 8 : static_cast<int>(&body - bodies.data());
     const BodyEffect effect = bodyEffect(index);
     if (effect.swallowed)
         return;
     const float bodyRadius = sun ? 1.25f : body.radius;
-    glm::mat4 model = glm::translate(glm::mat4(1.0f), effect.position) * glm::mat4(effect.basis);
     const float rotationAngle = simTime * 6.2831853f * ROTATION_SCALE / body.rotationPeriodDays;
-    model = glm::rotate(model, rotationAngle, glm::vec3(0, 1, 0));
-    model = glm::scale(model, glm::vec3(bodyRadius * effect.perpendicularScale,
-                                        bodyRadius * effect.perpendicularScale,
-                                        bodyRadius * effect.axialScale));
+    const glm::mat4 baseTransform =
+        glm::translate(glm::mat4(1.0f), effect.position) * glm::mat4(effect.basis) *
+        glm::rotate(glm::mat4(1.0f), rotationAngle, glm::vec3(0, 1, 0));
+    const glm::vec3 bodyScale(bodyRadius * effect.perpendicularScale,
+                              bodyRadius * effect.perpendicularScale,
+                              bodyRadius * effect.axialScale);
+    const glm::mat4 model = baseTransform * glm::scale(glm::mat4(1.0f), bodyScale);
+    const glm::vec3 lightPosition(20.0f * (std::cos(lightAngle) - 1.0f), 0.0f,
+                                  20.0f * std::sin(lightAngle));
+
+    if (!sun && body.name == "Earth") {
+        earthShader.use();
+        earthShader.set("model", model);
+        earthShader.set("view", view);
+        earthShader.set("projection", projection);
+        earthShader.set("lightPos", lightPosition);
+        earthShader.set("cameraPos", currentCamera);
+        earthShader.set("opacity", effect.opacity);
+        earthShader.set("hasDayTexture", earthDayTexture.isLoaded() ? 1 : 0);
+        earthShader.set("hasNightTexture", earthNightTexture.isLoaded() ? 1 : 0);
+        earthShader.set("hasNormalTexture", earthNormalTexture.isLoaded() ? 1 : 0);
+        earthShader.set("hasSpecularTexture", earthSpecularTexture.isLoaded() ? 1 : 0);
+        earthShader.set("hasCloudTexture", earthCloudTexture.isLoaded() ? 1 : 0);
+        earthShader.set("dayTexture", 0);
+        earthShader.set("nightTexture", 1);
+        earthShader.set("cloudTexture", 2);
+        earthShader.set("normalTexture", 3);
+        earthShader.set("specularTexture", 4);
+        earthDayTexture.bind(0);
+        earthNightTexture.bind(1);
+        earthCloudTexture.bind(2);
+        earthNormalTexture.bind(3);
+        earthSpecularTexture.bind(4);
+        earthShader.set("cloudPass", 0);
+        sphere.draw();
+
+        const glm::mat4 cloudModel =
+            glm::translate(glm::mat4(1.0f), effect.position) * glm::mat4(effect.basis) *
+            glm::rotate(glm::mat4(1.0f), rotationAngle * 1.12f, glm::vec3(0, 1, 0)) *
+            glm::scale(glm::mat4(1.0f), bodyScale * 1.025f);
+        earthShader.set("cloudPass", 1);
+        earthShader.set("model", cloudModel);
+        GLboolean cloudDepthWrite = GL_TRUE;
+        const GLboolean cloudBlend = glIsEnabled(GL_BLEND);
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &cloudDepthWrite);
+        GLint cloudSrcRgb = GL_ONE;
+        GLint cloudDstRgb = GL_ZERO;
+        GLint cloudSrcAlpha = GL_ONE;
+        GLint cloudDstAlpha = GL_ZERO;
+        glGetIntegerv(GL_BLEND_SRC_RGB, &cloudSrcRgb);
+        glGetIntegerv(GL_BLEND_DST_RGB, &cloudDstRgb);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA, &cloudSrcAlpha);
+        glGetIntegerv(GL_BLEND_DST_ALPHA, &cloudDstAlpha);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        sphere.draw();
+        glDepthMask(cloudDepthWrite);
+        glBlendFuncSeparate(static_cast<GLenum>(cloudSrcRgb), static_cast<GLenum>(cloudDstRgb),
+                            static_cast<GLenum>(cloudSrcAlpha),
+                            static_cast<GLenum>(cloudDstAlpha));
+        if (cloudBlend)
+            glEnable(GL_BLEND);
+        else
+            glDisable(GL_BLEND);
+
+        const glm::mat4 atmosphereModel =
+            baseTransform * glm::scale(glm::mat4(1.0f), bodyScale * 1.07f);
+        atmosphereShader.use();
+        atmosphereShader.set("model", atmosphereModel);
+        atmosphereShader.set("view", view);
+        atmosphereShader.set("projection", projection);
+        atmosphereShader.set("cameraPos", currentCamera);
+        atmosphereShader.set("opacity", effect.opacity);
+        const GLboolean atmosphereBlend = glIsEnabled(GL_BLEND);
+        GLboolean atmosphereDepthWrite = GL_TRUE;
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &atmosphereDepthWrite);
+        GLint oldCullFace = GL_BACK;
+        glGetIntegerv(GL_CULL_FACE_MODE, &oldCullFace);
+        GLint atmosphereSrcRgb = GL_ONE;
+        GLint atmosphereDstRgb = GL_ZERO;
+        GLint atmosphereSrcAlpha = GL_ONE;
+        GLint atmosphereDstAlpha = GL_ZERO;
+        glGetIntegerv(GL_BLEND_SRC_RGB, &atmosphereSrcRgb);
+        glGetIntegerv(GL_BLEND_DST_RGB, &atmosphereDstRgb);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA, &atmosphereSrcAlpha);
+        glGetIntegerv(GL_BLEND_DST_ALPHA, &atmosphereDstAlpha);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE);
+        glDepthMask(GL_FALSE);
+        glCullFace(GL_FRONT);
+        sphere.draw();
+        glCullFace(static_cast<GLenum>(oldCullFace));
+        glDepthMask(atmosphereDepthWrite);
+        if (atmosphereBlend)
+            glEnable(GL_BLEND);
+        else
+            glDisable(GL_BLEND);
+        glBlendFuncSeparate(static_cast<GLenum>(atmosphereSrcRgb),
+                            static_cast<GLenum>(atmosphereDstRgb),
+                            static_cast<GLenum>(atmosphereSrcAlpha),
+                            static_cast<GLenum>(atmosphereDstAlpha));
+        glActiveTexture(GL_TEXTURE0);
+        return;
+    }
+
     Shader &activeShader = sun ? sunShader : shader;
     activeShader.use();
     activeShader.set("model", model);
@@ -466,14 +585,95 @@ void Application::draw(const Body &body, bool sun) {
         activeShader.set("time", simTime);
     else {
         activeShader.set("color", body.color);
-        const glm::vec3 lightPosition(20.0f * (std::cos(lightAngle) - 1.0f), 0.0f,
-                                      20.0f * std::sin(lightAngle));
         activeShader.set("lightPos", lightPosition);
         activeShader.set("cameraPos", currentCamera);
         activeShader.set("emissive", 0.0f);
+        const bool isSaturn = body.name == "Saturn";
+        activeShader.set("ringEnabled", isSaturn ? 1 : 0);
+        if (isSaturn) {
+            const glm::mat4 ringOrientation =
+                glm::mat4(effect.basis) *
+                glm::rotate(glm::mat4(1.0f), rotationAngle, glm::vec3(0, 1, 0)) *
+                glm::rotate(glm::mat4(1.0f), glm::radians(27.0f), glm::vec3(1, 0, 0));
+            const glm::vec3 ringNormal =
+                glm::normalize(glm::vec3(ringOrientation * glm::vec4(0, 0, 1, 0)));
+            activeShader.set("ringCenter", effect.position);
+            activeShader.set("ringNormal", ringNormal);
+            activeShader.set("ringInnerRadius", bodyRadius * effect.perpendicularScale * 1.35f);
+            activeShader.set("ringOuterRadius", bodyRadius * effect.perpendicularScale * 2.6f);
+        }
     }
 
     (highQuality ? sphere : lowDetailSphere).draw();
+}
+
+void Application::drawSaturnRing(const glm::mat4 &view, const glm::mat4 &projection) {
+    constexpr int saturnIndex = 5;
+    const Body &saturn = bodies[static_cast<std::size_t>(saturnIndex)];
+    const BodyEffect effect = bodyEffect(saturnIndex);
+    if (effect.swallowed || effect.opacity <= 0.0f)
+        return;
+
+    const float bodyRadius = saturn.radius;
+    const float rotationAngle = simTime * 6.2831853f * ROTATION_SCALE / saturn.rotationPeriodDays;
+    const glm::mat4 orientation =
+        glm::mat4(effect.basis) *
+        glm::rotate(glm::mat4(1.0f), rotationAngle, glm::vec3(0, 1, 0)) *
+        glm::rotate(glm::mat4(1.0f), glm::radians(27.0f), glm::vec3(1, 0, 0));
+    const glm::mat4 model =
+        glm::translate(glm::mat4(1.0f), effect.position) * orientation *
+        glm::scale(glm::mat4(1.0f),
+                   glm::vec3(bodyRadius * effect.perpendicularScale,
+                             bodyRadius * effect.perpendicularScale,
+                             bodyRadius * effect.axialScale));
+    const glm::vec3 lightPosition(20.0f * (std::cos(lightAngle) - 1.0f), 0.0f,
+                                  20.0f * std::sin(lightAngle));
+
+    ringShader.use();
+    ringShader.set("model", model);
+    ringShader.set("view", view);
+    ringShader.set("projection", projection);
+    ringShader.set("lightPos", lightPosition);
+    ringShader.set("saturnCenter", effect.position);
+    ringShader.set("ringNormal", glm::normalize(glm::vec3(orientation * glm::vec4(0, 0, 1, 0))));
+    ringShader.set("saturnRadius", bodyRadius * effect.perpendicularScale);
+    ringShader.set("innerRadius", 1.35f);
+    ringShader.set("outerRadius", 2.6f);
+    ringShader.set("opacity", effect.opacity);
+    ringShader.set("hasRingTexture", saturnRingTexture.isLoaded() ? 1 : 0);
+    ringShader.set("ringTexture", 0);
+    saturnRingTexture.bind();
+
+    const GLboolean wasCulled = glIsEnabled(GL_CULL_FACE);
+    const GLboolean wasBlended = glIsEnabled(GL_BLEND);
+    GLboolean depthWrite = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite);
+    GLint blendSource = GL_ONE;
+    GLint blendDestination = GL_ZERO;
+    GLint blendSourceAlpha = GL_ONE;
+    GLint blendDestinationAlpha = GL_ZERO;
+    glGetIntegerv(GL_BLEND_SRC_RGB, &blendSource);
+    glGetIntegerv(GL_BLEND_DST_RGB, &blendDestination);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSourceAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDestinationAlpha);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    saturnRing.draw();
+    glDepthMask(depthWrite);
+    glBlendFuncSeparate(static_cast<GLenum>(blendSource), static_cast<GLenum>(blendDestination),
+                        static_cast<GLenum>(blendSourceAlpha),
+                        static_cast<GLenum>(blendDestinationAlpha));
+    if (wasCulled)
+        glEnable(GL_CULL_FACE);
+    else
+        glDisable(GL_CULL_FACE);
+    if (wasBlended)
+        glEnable(GL_BLEND);
+    else
+        glDisable(GL_BLEND);
+    glActiveTexture(GL_TEXTURE0);
 }
 
 void Application::drawSky(const glm::mat4 &view, const glm::mat4 &projection) {
@@ -770,13 +970,14 @@ void Application::run() {
         shader.set("view", view);
         shader.set("projection", projection);
         for (const Body &body : bodies)
-            draw(body);
+            draw(body, view, projection);
         sunBody.radius = 1.25f;
         sunShader.use();
         sunShader.set("view", view);
         sunShader.set("projection", projection);
-        draw(sunBody, true);
+        draw(sunBody, view, projection, true);
         blackHole.draw(view, projection, currentCamera, simTime);
+        drawSaturnRing(view, projection);
 
         postProcess.endScene();
         const GLuint hdrSceneTexture = postProcess.getHdrSceneColorTexture();

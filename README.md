@@ -38,10 +38,12 @@ The window can be resized and safely handles a minimized framebuffer. Team name 
 
 ## Feature status
 
-**Done:** The gameplay/camera module, HDR and bloom pipeline, and black-hole module: orbit/free-fly cameras, picking and fly-to, planet info and quiz, mission score/win/lose/restart, HDR bright-pass and Gaussian bloom, ACES tone mapping, and sRGB output. The black-hole module includes the Idle/Approaching/Consuming/Returning threat state machine, eased body pull/stretch/swallow effects, the event horizon and procedural accretion disk, and a screen-space gravitational lensing pass. Mission mode summons the hole automatically; Free Explore starts with it Idle. `B` summons or returns the hole, `R` restarts the mission, and `L` toggles lensing. `G` toggles only the bloom contribution; `Q` changes HDR scale, blur iterations, and sphere detail.
+**Done:** HDR rendering uses an RGBA16F scene target with depth, a documented fullscreen-pass hook, half-resolution bright-pass and separable Gaussian bloom, ACES tone mapping, exposure, and final sRGB conversion. `G` toggles bloom while retaining HDR and tone mapping. `Q` selects full-resolution HDR with eight blur iterations and high sphere detail, or 0.75-resolution HDR with four iterations and lower sphere detail. The existing lensing pass still consumes the HDR scene texture and sends its result through the bloom and tone-mapping composite. The gameplay/camera and black-hole modules are also implemented, including mission integration, event horizon, accretion disk, and body effects.
+
+**Done (Earth and Saturn renderer):** Earth has a soft day/night terminator, night-side city lights, procedural ocean/land and cloud fallbacks, a separately rotating cloud shell, optional normal/specular maps, and an additive Fresnel atmosphere. Saturn has a tilted, alpha-blended ring with procedural band/gap fallback, Saturn shadowing the ring, and the ring shadowing Saturn. All Earth layers and the ring follow the body's black-hole transform and fade. Optional textures are read from `assets/textures/`; no texture files are included, and the app uses procedural fallbacks.
 
 **Partial:** `I` changes HUD state only; instancing is not implemented. The old timer threat remains as an explicitly marked fallback alternative; the real black hole is selected by default. Scene sizes and distances are stylized, and the lensing/spaghettification are illustrative screen-space and transform effects rather than a physical simulation.
 
-**Missing:** No requested black-hole module items are missing. Decorative planetary rings and instancing are outside this module.
+**Missing:** No requested HDR, bloom, tone-mapping, G, or Q items are missing. Decorative planetary rings and instancing are outside this module.
 
 Build uses CMake FetchContent and requires dependency sources at configure time. A successful clean-source verification is reported with the project handoff, not assumed from this README.
