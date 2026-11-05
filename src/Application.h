@@ -43,8 +43,12 @@ private:
     Shader sunShader;
     Shader skyShader;
     Shader orbitShader;
+    Shader blackHoleShader;
+    Shader diskShader;
     Mesh sphere;
     Mesh lowDetailSphere;
+    Mesh blackHoleSphere;
+    Mesh accretionDisk;
     std::vector<Mesh> orbitLines;
     Mesh highlightRing;
     Texture skyTexture;
@@ -75,7 +79,9 @@ private:
     bool lensing = true;
     bool instancing = false;
     bool highQuality = true;
-    bool blackHoleEnabled = true;
+    bool blackHoleEnabled = false;
+    float blackHoleProgress = 0.0f;
+    float blackHoleTime = 0.0f;
     bool paused = false;
     bool help = false;
     bool freeFly = false;

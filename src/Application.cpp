@@ -30,6 +30,10 @@ namespace {
 constexpr float ORBIT_BASE_SECONDS = 120.0f;
 constexpr float ORBIT_COMPRESSION_EXPONENT = 0.5f;
 constexpr float ROTATION_SCALE = 0.0207f;
+constexpr float BLACK_HOLE_RADIUS = 1.35f;
+constexpr float BLACK_HOLE_DISK_INNER_RADIUS = 1.55f;
+constexpr float BLACK_HOLE_DISK_OUTER_RADIUS = 5.4f;
+constexpr float BLACK_HOLE_TRANSITION_SECONDS = 60.0f;
 
 float scrollDelta = 0.0f;
 void scrollCallback(GLFWwindow *, double, double y) {
@@ -215,11 +219,15 @@ bool Application::init() {
     glEnable(GL_CULL_FACE);
     sphere.makeSphere(32, 48);
     applyQualitySettings();
+    blackHoleSphere.makeSphere(32, 48);
+    accretionDisk.makeRing(BLACK_HOLE_DISK_INNER_RADIUS, BLACK_HOLE_DISK_OUTER_RADIUS);
     highlightRing.makeOrbit(1.0f);
     if (!shader.load("shaders/planet.vert", "shaders/planet.frag") ||
         !sunShader.load("shaders/planet.vert", "shaders/sun.frag") ||
         !skyShader.load("shaders/sky.vert", "shaders/sky.frag") ||
-        !orbitShader.load("shaders/orbit.vert", "shaders/orbit.frag"))
+        !orbitShader.load("shaders/orbit.vert", "shaders/orbit.frag") ||
+        !blackHoleShader.load("shaders/blackhole.vert", "shaders/blackhole.frag") ||
+        !diskShader.load("shaders/disk.vert", "shaders/disk.frag"))
         return false;
     skyTexture.load("assets/textures/stars_milky_way.jpg");
     IMGUI_CHECKVERSION();
@@ -340,7 +348,7 @@ void Application::startMission() {
     instancing = false;
     highQuality = true;
     applyQualitySettings();
-    blackHoleEnabled = true;
+    blackHoleEnabled = false;
     help = false;
 }
 
@@ -517,7 +525,7 @@ void Application::input(float deltaTime) {
     }
     if (b && !lastBDown) {
         blackHoleEnabled = !blackHoleEnabled;
-        std::cout << "Black hole state: " << (blackHoleEnabled ? "ON" : "OFF") << '\n';
+        std::cout << "Black hole: " << (blackHoleEnabled ? "Approaching" : "Returning") << '\n';
     }
     if ((f1 && !lastF1Down) || (h && !lastHDown))
         help = !help;
@@ -662,6 +670,14 @@ void Application::run() {
         if (gameplayActive && !paused && !quizOpen)
             simTime += dt * static_cast<float>(speed);
         updateMission(dt);
+        if (!paused && !quizOpen) {
+            blackHoleTime += dt;
+            const float progressStep = dt * threatSpeedMultiplier / BLACK_HOLE_TRANSITION_SECONDS;
+            if (blackHoleEnabled)
+                blackHoleProgress = std::min(blackHoleProgress + progressStep, 1.0f);
+            else
+                blackHoleProgress = std::max(blackHoleProgress - progressStep, 0.0f);
+        }
         if (flying) {
             flyElapsed += dt;
             const float t = std::clamp(flyElapsed / 1.5f, 0.0f, 1.0f);
@@ -725,6 +741,71 @@ void Application::run() {
         sunShader.set("projection", projection);
         draw(sunBody, true);
 
+        const glm::vec3 farHolePosition(6.0f, 11.0f, 18.0f);
+        const float approachEase =
+            blackHoleProgress * blackHoleProgress * (3.0f - 2.0f * blackHoleProgress);
+        const float revealProgress = std::clamp(blackHoleProgress / 0.12f, 0.0f, 1.0f);
+        const float holeVisibility =
+            revealProgress * revealProgress * (3.0f - 2.0f * revealProgress);
+        const glm::vec3 holePosition = glm::mix(farHolePosition, glm::vec3(0.0f), approachEase);
+        if (holeVisibility > 0.0f) {
+            const glm::mat4 holeTransform =
+                glm::translate(glm::mat4(1.0f), holePosition) *
+                glm::scale(glm::mat4(1.0f), glm::vec3(BLACK_HOLE_RADIUS * holeVisibility));
+            const glm::mat4 diskTransform =
+                glm::translate(glm::mat4(1.0f), holePosition) *
+                glm::rotate(glm::mat4(1.0f), glm::radians(30.0f), glm::vec3(1.0f, 0.0f, 0.0f)) *
+                glm::scale(glm::mat4(1.0f), glm::vec3(holeVisibility));
+
+            const GLboolean cullingWasEnabled = glIsEnabled(GL_CULL_FACE);
+            const GLboolean blendingWasEnabled = glIsEnabled(GL_BLEND);
+            GLboolean depthWriteWasEnabled = GL_TRUE;
+            glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+            GLint oldBlendSrcRgb = GL_ONE;
+            GLint oldBlendDstRgb = GL_ZERO;
+            GLint oldBlendSrcAlpha = GL_ONE;
+            GLint oldBlendDstAlpha = GL_ZERO;
+            glGetIntegerv(GL_BLEND_SRC_RGB, &oldBlendSrcRgb);
+            glGetIntegerv(GL_BLEND_DST_RGB, &oldBlendDstRgb);
+            glGetIntegerv(GL_BLEND_SRC_ALPHA, &oldBlendSrcAlpha);
+            glGetIntegerv(GL_BLEND_DST_ALPHA, &oldBlendDstAlpha);
+
+            diskShader.use();
+            diskShader.set("model", diskTransform);
+            diskShader.set("view", view);
+            diskShader.set("projection", projection);
+            diskShader.set("cameraPos", currentCamera);
+            diskShader.set("time", blackHoleTime);
+            diskShader.set("opacity", holeVisibility);
+            diskShader.set("innerRadius", BLACK_HOLE_DISK_INNER_RADIUS);
+            diskShader.set("outerRadius", BLACK_HOLE_DISK_OUTER_RADIUS);
+            glDepthMask(GL_FALSE);
+            glDisable(GL_CULL_FACE);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            accretionDisk.draw();
+
+            glDepthMask(depthWriteWasEnabled);
+            if (cullingWasEnabled)
+                glEnable(GL_CULL_FACE);
+            else
+                glDisable(GL_CULL_FACE);
+            glBlendFuncSeparate(static_cast<GLenum>(oldBlendSrcRgb),
+                                static_cast<GLenum>(oldBlendDstRgb),
+                                static_cast<GLenum>(oldBlendSrcAlpha),
+                                static_cast<GLenum>(oldBlendDstAlpha));
+            if (blendingWasEnabled)
+                glEnable(GL_BLEND);
+            else
+                glDisable(GL_BLEND);
+
+            blackHoleShader.use();
+            blackHoleShader.set("model", holeTransform);
+            blackHoleShader.set("view", view);
+            blackHoleShader.set("projection", projection);
+            blackHoleSphere.draw();
+        }
+
         postProcess.endScene();
         postProcess.composite(bloom, highQuality ? 8 : 4);
 
@@ -752,8 +833,11 @@ void Application::run() {
                     MISSION_TARGET_SCORE);
         ImGui::Text("Bloom %s | Lensing %s | Instancing %s", bloom ? "ON" : "OFF",
                     lensing ? "ON" : "OFF", instancing ? "ON" : "OFF");
-        ImGui::Text("Quality: %s | Black hole %s | Light %.1f deg", highQuality ? "High" : "Low",
-                    blackHoleEnabled ? "ON" : "OFF", lightAngle * 57.2957795f);
+        const char *blackHoleStatus = blackHoleEnabled ? "Approaching" :
+                                      blackHoleProgress > 0.0f ? "Returning" : "Idle";
+        ImGui::Text("Quality: %s | Black hole: %s p=%.0f%% | Light %.1f deg",
+                    highQuality ? "High" : "Low", blackHoleStatus, blackHoleProgress * 100.0f,
+                    lightAngle * 57.2957795f);
         if (gameState == GameState::Mission)
             ImGui::ProgressBar(threat.getThreatProgress(), ImVec2(-1, 0), "Threat approaching");
         ImGui::Separator();
@@ -804,7 +888,7 @@ void Application::run() {
             ImGui::Text("1 / 2 / 3: simulation speed 1x / 5x / 10x");
             ImGui::Text("G: toggle bloom state | L: toggle lensing state");
             ImGui::Text("I: toggle instancing state | Q: toggle high / low sphere quality");
-            ImGui::Text("B: toggle black-hole state | R: restart mission");
+            ImGui::Text("B: summon / return black hole | R: restart mission");
             ImGui::Text("F: toggle free-fly | [ / ]: rotate Sun light");
             ImGui::Text("Esc: clear selection / return to overview");
             ImGui::Text("F12: save screenshot");
