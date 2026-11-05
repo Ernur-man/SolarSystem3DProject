@@ -30,7 +30,6 @@ namespace {
 constexpr float ORBIT_BASE_SECONDS = 120.0f;
 constexpr float ORBIT_COMPRESSION_EXPONENT = 0.5f;
 constexpr float ROTATION_SCALE = 0.0207f;
-
 float scrollDelta = 0.0f;
 void scrollCallback(GLFWwindow *, double, double y) {
     scrollDelta += static_cast<float>(y);
@@ -90,6 +89,8 @@ std::string readText(const char *path) {
 }
 
 Application::~Application() {
+    blackHole.release();
+    postProcess.release();
     skyTexture.release();
     if (window) {
         ImGui_ImplOpenGL3_Shutdown();
@@ -213,7 +214,7 @@ bool Application::init() {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     sphere.makeSphere(32, 48);
-    lowDetailSphere.makeSphere(12, 18);
+    applyQualitySettings();
     highlightRing.makeOrbit(1.0f);
     if (!shader.load("shaders/planet.vert", "shaders/planet.frag") ||
         !sunShader.load("shaders/planet.vert", "shaders/sun.frag") ||
@@ -239,7 +240,14 @@ bool Application::init() {
         orbitLines.emplace_back();
         orbitLines.back().makeOrbit(body.orbit);
     }
-    return true;
+    glfwGetFramebufferSize(window, &width, &height);
+    if (!postProcess.initialize(width, height, highQuality ? 1.0f : 0.75f))
+        return false;
+    return blackHole.initialize(postProcess.getWidth(), postProcess.getHeight());
+}
+
+void Application::applyQualitySettings() {
+    lowDetailSphere.makeSphere(highQuality ? 12u : 8u, highQuality ? 18u : 12u);
 }
 
 glm::vec3 Application::cameraPosition() const {
@@ -300,11 +308,12 @@ void Application::beginQuiz() {
     quizOpen = true;
 }
 
-void Application::startMission() {
+void Application::startMission(bool summonHole) {
     gameState = GameState::Mission;
     missionScore = 0;
     visitedBodies.fill(false);
-    threat.reset();
+    blackHole.reset();
+    fallbackThreat.reset();
     threatSpeedMultiplier = 1.0f;
     simTime = 0.0f;
     speed = 1;
@@ -333,24 +342,39 @@ void Application::startMission() {
     lensing = true;
     instancing = false;
     highQuality = true;
-    blackHoleEnabled = true;
+    applyQualitySettings();
+    blackHole.setThreatSpeedMultiplier(threatSpeedMultiplier);
+    fallbackThreat.setThreatSpeedMultiplier(threatSpeedMultiplier);
+    if (summonHole)
+        blackHole.summon();
     help = false;
 }
 
 void Application::startFreeExplore() {
-    startMission();
+    startMission(false);
     gameState = GameState::FreeExplore;
 }
 
 void Application::updateMission(float deltaTime) {
     if (gameState != GameState::Mission)
         return;
-    threat.update(deltaTime);
-    if (threat.isSunSwallowed()) {
+    activeThreat().update(deltaTime);
+    if (activeThreat().isSunSwallowed()) {
         gameState = GameState::Lost;
         quizOpen = false;
         paused = true;
     }
+}
+
+ThreatInterface &Application::activeThreat() {
+    if (useFallbackThreat)
+        return fallbackThreat;
+    return blackHole;
+}
+
+BodyEffect Application::bodyEffect(int index) const {
+    const bool sun = index == 8;
+    return blackHole.affectBody(bodyPosition(index, simTime), sun);
 }
 
 void Application::recordVisit(int index) {
@@ -378,7 +402,8 @@ void Application::recordQuizAnswer(bool correct) {
     } else {
         threatSpeedMultiplier = std::min(4.0f, threatSpeedMultiplier * 1.25f);
     }
-    threat.setThreatSpeedMultiplier(threatSpeedMultiplier);
+    blackHole.setThreatSpeedMultiplier(threatSpeedMultiplier);
+    fallbackThreat.setThreatSpeedMultiplier(threatSpeedMultiplier);
     if (missionScore >= MISSION_TARGET_SCORE) {
         gameState = GameState::Won;
         quizOpen = false;
@@ -423,14 +448,20 @@ void Application::saveScreenshot() {
 
 void Application::draw(const Body &body, bool sun) {
     const int index = sun ? 8 : static_cast<int>(&body - bodies.data());
-    const glm::vec3 position = bodyPosition(index, simTime);
-    glm::mat4 model = glm::translate(glm::mat4(1), position);
+    const BodyEffect effect = bodyEffect(index);
+    if (effect.swallowed)
+        return;
+    const float bodyRadius = sun ? 1.25f : body.radius;
+    glm::mat4 model = glm::translate(glm::mat4(1.0f), effect.position) * glm::mat4(effect.basis);
     const float rotationAngle = simTime * 6.2831853f * ROTATION_SCALE / body.rotationPeriodDays;
     model = glm::rotate(model, rotationAngle, glm::vec3(0, 1, 0));
-    model = glm::scale(model, glm::vec3(sun ? 1.25f : body.radius));
+    model = glm::scale(model, glm::vec3(bodyRadius * effect.perpendicularScale,
+                                        bodyRadius * effect.perpendicularScale,
+                                        bodyRadius * effect.axialScale));
     Shader &activeShader = sun ? sunShader : shader;
     activeShader.use();
     activeShader.set("model", model);
+    activeShader.set("opacity", effect.opacity);
     if (sun)
         activeShader.set("time", simTime);
     else {
@@ -441,6 +472,7 @@ void Application::draw(const Body &body, bool sun) {
         activeShader.set("cameraPos", currentCamera);
         activeShader.set("emissive", 0.0f);
     }
+
     (highQuality ? sphere : lowDetailSphere).draw();
 }
 
@@ -505,18 +537,26 @@ void Application::input(float deltaTime) {
     }
     if (q && !lastQDown) {
         highQuality = !highQuality;
-        std::cout << "Quality: " << (highQuality ? "HIGH" : "LOW") << '\n';
+        applyQualitySettings();
+        std::cout << "Quality: " << (highQuality ? "High" : "Low") << '\n';
     }
     if (b && !lastBDown) {
-        blackHoleEnabled = !blackHoleEnabled;
-        std::cout << "Black hole state: " << (blackHoleEnabled ? "ON" : "OFF") << '\n';
+        if (gameState == GameState::Mission || gameState == GameState::FreeExplore) {
+            if (blackHole.isIdle())
+                blackHole.summon();
+            else
+                blackHole.returnBack();
+        }
     }
     if ((f1 && !lastF1Down) || (h && !lastHDown))
         help = !help;
-    if (r && !lastRDown &&
-        (gameState == GameState::Mission || gameState == GameState::Won ||
-         gameState == GameState::Lost))
-        startMission();
+    if (r && !lastRDown) {
+        if (gameState == GameState::FreeExplore)
+            blackHole.returnBack();
+        else if (gameState == GameState::Mission || gameState == GameState::Won ||
+                 gameState == GameState::Lost)
+            startMission();
+    }
     if (f12 && !lastF12Down)
         screenshotRequested = true;
     lastGDown = g;
@@ -611,8 +651,12 @@ void Application::input(float deltaTime) {
         float closest = 1.0e30f;
         int hit = -1;
         for (int i = 0; i <= 8; ++i) {
-            const glm::vec3 center = bodyPosition(i, simTime);
-            const float radius = i == 8 ? 1.25f : bodies[static_cast<std::size_t>(i)].radius;
+            const BodyEffect effect = bodyEffect(i);
+            if (effect.swallowed)
+                continue;
+            const glm::vec3 center = effect.position;
+            const float baseRadius = i == 8 ? 1.25f : bodies[static_cast<std::size_t>(i)].radius;
+            const float radius = baseRadius * std::max(effect.axialScale, effect.perpendicularScale);
             const glm::vec3 oc = origin - center;
             const float b = glm::dot(oc, ray);
             const float c = glm::dot(oc, oc) - radius * radius;
@@ -645,18 +689,38 @@ void Application::run() {
             continue;
         }
         input(dt);
+        if (!postProcess.resize(width, height, highQuality ? 1.0f : 0.75f)) {
+            glfwPollEvents();
+            continue;
+        }
+        if (!blackHole.resize(postProcess.getWidth(), postProcess.getHeight())) {
+            glfwPollEvents();
+            continue;
+        }
         const bool gameplayActive =
             gameState == GameState::Mission || gameState == GameState::FreeExplore;
         if (gameplayActive && !paused && !quizOpen)
             simTime += dt * static_cast<float>(speed);
-        updateMission(dt);
+        const float threatDeltaTime = !paused && !quizOpen ? dt * static_cast<float>(speed) : 0.0f;
+        if (gameState == GameState::Mission)
+            updateMission(threatDeltaTime);
+        else if (gameState == GameState::FreeExplore)
+            blackHole.update(threatDeltaTime);
+        if (selected >= 0 && bodyEffect(selected).swallowed) {
+            selected = -1;
+            distance = overviewDistance;
+            flying = true;
+            flyElapsed = 0.0f;
+            startCamera = currentCamera;
+            startTarget = cameraTarget;
+        }
         if (flying) {
             flyElapsed += dt;
             const float t = std::clamp(flyElapsed / 1.5f, 0.0f, 1.0f);
             const float eased =
                 t * t * (3.0f - 2.0f); // Smoothstep eases both ends of the camera path.
             const glm::vec3 endTarget =
-                selected >= 0 ? bodyPosition(selected, simTime) : glm::vec3(0);
+                selected >= 0 ? bodyEffect(selected).position : glm::vec3(0);
             const glm::vec3 endCamera = selected >= 0
                                             ? endTarget + flyCameraOffset
                                             : glm::vec3(distance * std::cos(pitch) * std::sin(yaw),
@@ -667,15 +731,16 @@ void Application::run() {
             if (t >= 1.0f)
                 flying = false;
         } else if (selected >= 0 && !freeFly) {
-            const glm::vec3 target = bodyPosition(selected, simTime);
+            const glm::vec3 target = bodyEffect(selected).position;
             cameraTarget = target;
             currentCamera = target + flyCameraOffset;
         } else if (!freeFly) {
             currentCamera = cameraPosition();
         }
-        glViewport(0, 0, width, height);
-        glClearColor(0.004f, 0.006f, 0.025f, 1);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        if (!postProcess.beginScene()) {
+            glfwPollEvents();
+            continue;
+        }
         const glm::mat4 view = glm::lookAt(currentCamera, cameraTarget, glm::vec3(0, 1, 0));
         const glm::mat4 projection =
             glm::perspective(glm::radians(45.0f), static_cast<float>(width) / height, 0.1f, 100.0f);
@@ -690,7 +755,7 @@ void Application::run() {
             orbitLines[i].drawOrbit();
         }
         if (selected >= 0) {
-            const glm::vec3 position = bodyPosition(selected, simTime);
+            const glm::vec3 position = bodyEffect(selected).position;
             const float radius =
                 selected == 8 ? 1.25f : bodies[static_cast<std::size_t>(selected)].radius;
             const glm::mat4 ringModel =
@@ -711,6 +776,14 @@ void Application::run() {
         sunShader.set("view", view);
         sunShader.set("projection", projection);
         draw(sunBody, true);
+        blackHole.draw(view, projection, currentCamera, simTime);
+
+        postProcess.endScene();
+        const GLuint hdrSceneTexture = postProcess.getHdrSceneColorTexture();
+        const GLuint sceneTextureForComposite =
+            blackHole.renderLensing(hdrSceneTexture, postProcess.getWidth(), postProcess.getHeight(),
+                                    view, projection, lensing);
+        postProcess.composite(sceneTextureForComposite, bloom, highQuality ? 8 : 4);
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -734,19 +807,24 @@ void Application::run() {
             missionStatus = "Sun swallowed";
         ImGui::Text("Status: %s | Score: %d / %d", missionStatus, missionScore,
                     MISSION_TARGET_SCORE);
-        ImGui::Text("Bloom %s | Lensing %s | Instancing %s", bloom ? "ON" : "OFF",
-                    lensing ? "ON" : "OFF", instancing ? "ON" : "OFF");
-        ImGui::Text("Quality %s | Black hole %s | Light %.1f deg", highQuality ? "HIGH" : "LOW",
-                    blackHoleEnabled ? "ON" : "OFF", lightAngle * 57.2957795f);
+        ImGui::Text("Bloom %s | Instancing %s", bloom ? "ON" : "OFF",
+                    instancing ? "ON" : "OFF");
+        ImGui::Text("Lensing: %s", lensing ? "ON" : "OFF");
+        ImGui::Text("Quality: %s | Black hole: %s p=%.0f%% | Light %.1f deg",
+                    highQuality ? "High" : "Low", blackHole.getStateName(),
+                    blackHole.getThreatProgress() * 100.0f, lightAngle * 57.2957795f);
         if (gameState == GameState::Mission)
-            ImGui::ProgressBar(threat.getThreatProgress(), ImVec2(-1, 0), "Threat approaching");
+            ImGui::ProgressBar(activeThreat().getThreatProgress(), ImVec2(-1, 0),
+                               "Threat approaching");
         ImGui::Separator();
         if (gameplayActive) {
             ImGui::Text("Select a world");
-            for (std::size_t i = 0; i < bodies.size(); ++i)
-                if (ImGui::Selectable(bodies[i].name.c_str(), selected == static_cast<int>(i)))
+            for (std::size_t i = 0; i < bodies.size(); ++i) {
+                if (!bodyEffect(static_cast<int>(i)).swallowed &&
+                    ImGui::Selectable(bodies[i].name.c_str(), selected == static_cast<int>(i)))
                     selectBody(static_cast<int>(i));
-            if (ImGui::Selectable("Sun", selected == 8))
+            }
+            if (!bodyEffect(8).swallowed && ImGui::Selectable("Sun", selected == 8))
                 selectBody(8);
         }
         if (selected >= 0) {
@@ -788,7 +866,7 @@ void Application::run() {
             ImGui::Text("1 / 2 / 3: simulation speed 1x / 5x / 10x");
             ImGui::Text("G: toggle bloom state | L: toggle lensing state");
             ImGui::Text("I: toggle instancing state | Q: toggle high / low sphere quality");
-            ImGui::Text("B: toggle black-hole state | R: restart mission");
+            ImGui::Text("B: summon / return black hole | R: return in Free Explore / restart mission");
             ImGui::Text("F: toggle free-fly | [ / ]: rotate Sun light");
             ImGui::Text("Esc: clear selection / return to overview");
             ImGui::Text("F12: save screenshot");

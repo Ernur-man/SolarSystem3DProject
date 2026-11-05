@@ -12,6 +12,7 @@ public:
 
     void makeSphere(unsigned rings = 24, unsigned sectors = 32);
     void draw() const;
+    void makeRing(float innerRadius, float outerRadius, unsigned segments = 192);
     void makeOrbit(float radius, unsigned segments = 128);
     void drawOrbit() const;
 };

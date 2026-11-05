@@ -5,6 +5,7 @@ in vec3 worldPos;
 out vec4 FragColor;
 
 uniform float time;
+uniform float opacity;
 
 float hash(vec3 p) {
     return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
@@ -32,5 +33,6 @@ void main() {
         a *= 0.5;
     }
     vec3 c = mix(vec3(1.0, 0.18, 0.015), vec3(1.0, 0.83, 0.25), smoothstep(0.24, 0.78, n));
-    FragColor = vec4(c * 2.4, 1.0);
+    // opacity reduces the Sun's emitted HDR radiance as it is swallowed.
+    FragColor = vec4(c * 2.4 * opacity, 1.0);
 }

@@ -5,6 +5,12 @@
 #include <vector>
 
 void Mesh::makeSphere(unsigned rings, unsigned sectors) {
+    if (ebo != 0)
+        glDeleteBuffers(1, &ebo);
+    if (vbo != 0)
+        glDeleteBuffers(1, &vbo);
+    if (vao != 0)
+        glDeleteVertexArrays(1, &vao);
     std::vector<float> vertices;
     std::vector<unsigned> indices;
 
@@ -55,6 +61,59 @@ void Mesh::makeSphere(unsigned rings, unsigned sectors) {
 void Mesh::draw() const {
     glBindVertexArray(vao);
     glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, nullptr);
+}
+
+void Mesh::makeRing(float innerRadius, float outerRadius, unsigned segments) {
+    if (ebo != 0)
+        glDeleteBuffers(1, &ebo);
+    if (vbo != 0)
+        glDeleteBuffers(1, &vbo);
+    if (vao != 0)
+        glDeleteVertexArrays(1, &vao);
+
+    std::vector<float> vertices;
+    std::vector<unsigned> indices;
+    vertices.reserve(static_cast<std::size_t>(segments + 1) * 16);
+    indices.reserve(static_cast<std::size_t>(segments) * 6);
+    for (unsigned i = 0; i <= segments; ++i) {
+        const float angle = 6.2831853f * static_cast<float>(i) / static_cast<float>(segments);
+        const float x = std::cos(angle);
+        const float y = std::sin(angle);
+        for (unsigned edge = 0; edge < 2; ++edge) {
+            const float radius = edge == 0 ? innerRadius : outerRadius;
+            vertices.insert(vertices.end(), {radius * x, radius * y, 0.0f, 0.0f, 0.0f, 1.0f,
+                                             radius * x, radius * y});
+        }
+        if (i < segments) {
+            const unsigned inner = i * 2;
+            const unsigned outer = inner + 1;
+            const unsigned nextInner = inner + 2;
+            const unsigned nextOuter = inner + 3;
+            indices.insert(indices.end(), {inner, outer, nextOuter, inner, nextOuter, nextInner});
+        }
+    }
+
+    count = static_cast<GLsizei>(indices.size());
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glGenBuffers(1, &ebo);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(float)),
+                 vertices.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(indices.size() * sizeof(unsigned)), indices.data(),
+                 GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), nullptr);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float),
+                          reinterpret_cast<void *>(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float),
+                          reinterpret_cast<void *>(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    glBindVertexArray(0);
 }
 
 void Mesh::makeOrbit(float radius, unsigned segments) {
