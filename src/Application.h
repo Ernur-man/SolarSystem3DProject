@@ -42,13 +42,23 @@ private:
     GLFWwindow *window = nullptr;
     Shader shader;
     Shader sunShader;
+    Shader earthShader;
+    Shader atmosphereShader;
+    Shader ringShader;
     Shader skyShader;
     Shader orbitShader;
     Mesh sphere;
     Mesh lowDetailSphere;
     std::vector<Mesh> orbitLines;
     Mesh highlightRing;
+    Mesh saturnRing;
     Texture skyTexture;
+    Texture earthDayTexture;
+    Texture earthNightTexture;
+    Texture earthCloudTexture;
+    Texture earthNormalTexture;
+    Texture earthSpecularTexture;
+    Texture saturnRingTexture;
     PostProcess postProcess;
     std::vector<Body> bodies;
     Body sunBody;
@@ -123,8 +133,10 @@ private:
     void recordVisit(int index);
     void recordQuizAnswer(bool correct);
     void saveScreenshot();
-    void draw(const Body &body, bool sun = false);
+    void draw(const Body &body, const glm::mat4 &view, const glm::mat4 &projection,
+              bool sun = false);
     void drawSky(const glm::mat4 &view, const glm::mat4 &projection);
+    void drawSaturnRing(const glm::mat4 &view, const glm::mat4 &projection);
     void applyQualitySettings();
     ThreatInterface &activeThreat();
     BodyEffect bodyEffect(int index) const;

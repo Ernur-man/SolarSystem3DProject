@@ -100,3 +100,58 @@ Use the same scene, camera, resolution, and duration for each row. Record the ma
 | Off | High |  |  |  |
 | On | Low |  |  |  |
 | Off | Low |  |  |  |
+
+## Earth day/night, clouds, and atmosphere
+
+Earth uses optional sRGB day, night, and cloud maps; normal and specular maps are sampled as linear data. Missing maps are reported with their file paths and use the corresponding shader fallback. In the fallback, smooth value noise is accumulated as four-octave FBM to make broad continents, smaller terrain variation, cloud patches, and city-light clusters. The surface combines the day color and night color with a soft terminator:
+
+```text
+N = normalized surface normal (optionally normal-mapped)
+L = normalize(lightPosition - worldPosition)
+dayFactor = smoothstep(-0.12, 0.12, dot(N, L))
+surface = mix(nightColor, dayColor, dayFactor)
+```
+
+Procedural city lights come from `smoothstep(0.68, 0.79, FBM(localPosition*72 + offset))*2.4`; they are used as the night color's warm emission. The cloud sphere uses a different angular rate (`rotationAngle * 1.12`) and a scale factor of `1.025`. If no cloud texture is loaded, its coverage is `smoothstep(0.54, 0.72, FBM(localPosition*13 + offset))`, multiplied by 0.62 and the same black-hole fade as Earth.
+
+The atmosphere shell is 1.07 times the body scale. Its additive blue rim uses the Fresnel approximation:
+
+```text
+rim = pow(1 - max(dot(N, V), 0), 3)
+atmosphereRGB = (0.12, 0.42, 1.0) * rim * 1.8 * bodyOpacity
+```
+
+Here `V` points from the surface to the camera. The rim grows at grazing angles; additive blending makes the shell glow without writing depth. The planet and its shells reuse the black-hole-adjusted position, basis, stretch, and opacity, so they return together.
+
+## Saturn ring and mutual shadows
+
+The ring is a flat annulus with a 27-degree tilt and it shares Saturn's position, orientation, size scale, and swallow opacity. If `saturn_ring.png` is available its color and alpha are sampled by radial coordinate. Otherwise, the shader mixes radial sine bands with value noise and fades gaps at both annulus edges.
+
+For ring fragments, the Sun ray is tested against Saturn's sphere. With `o = fragmentPosition - saturnCenter`, normalized ray `D`, and Saturn radius `R`:
+
+```text
+b = dot(o, D)
+c = dot(o, o) - R*R
+discriminant = b*b - c
+tNear = -b - sqrt(max(discriminant, 0))
+shadow if discriminant >= 0 and 0 < tNear < distanceToSun
+ringLight = 0.22 in shadow, otherwise 1
+```
+
+For the reverse shadow on Saturn, the shader intersects its point-to-Sun ray with the ring plane. With ring center `C`, plane normal `n`, and ray direction `L`:
+
+```text
+t = dot(C - fragmentPosition, n) / dot(L, n)
+intersection = fragmentPosition + t*L
+r = length(intersection - C - n*dot(intersection - C, n))
+shadow if 0 < t < distanceToSun and ringInnerRadius <= r <= ringOuterRadius
+directLight = 0.22 in shadow, otherwise 1
+```
+
+The ring draw disables culling only for its annulus, alpha blends it, and turns off depth writes while leaving depth testing active. It is rendered after the opaque bodies and inside the scene HDR pass, so bloom and lensing operate on it along with the rest of the scene.
+
+## Plain-language explanation for the defence
+
+Earth's shader checks whether a surface point faces the Sun. A smooth transition around a zero normal/light dot product makes day fade into night. On the dark side it adds either the night texture or small procedural warm lights. When maps are absent, layered noise builds continents and clouds, so no image assets are required. A second, slightly larger sphere carries clouds and rotates at a different rate. The outer atmosphere shell uses the view angle: it adds little light when looked at face-on and more at the silhouette, producing a blue rim.
+
+Saturn's ring is an annular mesh with transparent gaps. For each ring fragment, a short ray toward the Sun is checked against Saturn's sphere; if it hits before reaching the light, the ring is darkened. Saturn's surface performs the reciprocal check by intersecting its sunlight ray with the ring plane and checking whether the hit lies within the annulus. The same transformed position and opacity used for Saturn also drive its ring, while its shadow calculations keep using analytic sphere/plane tests.
