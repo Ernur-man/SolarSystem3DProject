@@ -2,7 +2,9 @@
 
 out vec4 FragColor;
 uniform vec3 color;
+uniform float lineAlpha;
 
 void main() {
-    FragColor = vec4(color, 1.0);
+    // Alpha lets the depth-tested guide lines remain subtle over the HDR scene.
+    FragColor = vec4(color, lineAlpha);
 }

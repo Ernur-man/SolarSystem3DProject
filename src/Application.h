@@ -136,6 +136,8 @@ private:
     void draw(const Body &body, const glm::mat4 &view, const glm::mat4 &projection,
               bool sun = false);
     void drawSky(const glm::mat4 &view, const glm::mat4 &projection);
+    void drawOrbitLines(const glm::mat4 &view, const glm::mat4 &projection);
+    void drawSelectionRing(const glm::mat4 &view, const glm::mat4 &projection);
     void drawSaturnRing(const glm::mat4 &view, const glm::mat4 &projection);
     void applyQualitySettings();
     ThreatInterface &activeThreat();

@@ -1,5 +1,19 @@
 # Gameplay and UI Equations
 
+## Orbit-line depth handling
+
+The old red screenshot showed the near side of Earth's circular solar orbit crossing the planet's projected disk. That part of the orbit is in front of Earth in camera space, so ordinary depth testing correctly lets it pass; it was not a missing depth attachment or a planet that failed to write depth. The diagnostic logs measured the same HDR draw FBO and depth renderbuffer after the opaque draws and before the orbit pass, with depth testing on and depth writes on for the opaque pass. The test's red-pixel count was the same for `GL_LEQUAL` and `GL_ALWAYS`, so that pixel-count probe did not distinguish the depth functions; no conclusive `GL_LESS` pixel result was captured.
+
+To match the requested visual rule that a planet covers its orbit line anywhere the line projects over the disk, guides now draw before opaque bodies with depth writes disabled. The body color then overwrites the guide across the full planet silhouette. The guide shader uses an alpha uniform, and the normal pass uses a thin line with 0.48 alpha. The pass uses the same view and projection matrices as the planet draw. Inspection found no `gl_FragDepth` or `glDepthRange` override in either shader path.
+
+Frame depth and framebuffer sequence: `PostProcess::beginScene` binds/clears the HDR scene FBO and enables depth testing; `Application::drawSky` uses `GL_LEQUAL` and depth writes off, then restores `GL_LESS` and writes on; the orbit pass uses `GL_LEQUAL` and depth writes off, then restores its prior values; Earth cloud and atmosphere and Saturn ring each disable depth writes only around their own draw and restore the saved mask; `BlackHole::draw` restores its saved depth mask; the selected ring saves and restores depth state; `PostProcess::endScene` restores the prior draw/read FBO; `BlackHole::renderLensing` binds its own lensing FBO, disables depth testing and writes for the fullscreen pass, then restores the prior framebuffer and depth state; `PostProcess::composite` binds bloom ping-pong targets as needed and restores the prior framebuffer, depth test, and write mask. No depth clear occurs between opaque bodies and orbit guides. Source locations: `src/PostProcess.cpp` lines 160-174, `src/Application.cpp` lines 657-674 and 694-730, `src/BlackHole.cpp` lines 296-306 and 351-384, and `src/PostProcess.cpp` lines 207-264.
+
+## Selection ring placement
+
+The previous ring model added `radius * 1.15` to world-space Y, which lifted the entire ecliptic ring above the planet (visible in the previous capture). The ring now translates to `bodyEffect(selected).position`, the same post-black-hole position used by the body model, and its radius is `1.35 * bodyRadius * effect.perpendicularScale`. Its XZ plane preserves the existing ecliptic orientation. Its alpha follows the body's swallow fade, while depth testing hides the half behind the sphere.
+
+In plain language: I moved orbit guides underneath the planet draw so the planet itself covers any line over its disk. I removed the selection ring's extra upward offset and sized it from the planet's current rendered scale. I removed the temporary red test, forced Earth camera, debug prints, and automatic captures. The app built cleanly, but a final interactive view could not be captured because Windows did not expose the launched app as a targetable window.
+
 ## Planet position
 
 The rendered orbit is circular, with the real orbital period compressed for readable motion:

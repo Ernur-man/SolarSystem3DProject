@@ -31,6 +31,7 @@ constexpr float ORBIT_BASE_SECONDS = 120.0f;
 constexpr float ORBIT_COMPRESSION_EXPONENT = 0.5f;
 constexpr float ROTATION_SCALE = 0.0207f;
 float scrollDelta = 0.0f;
+
 void scrollCallback(GLFWwindow *, double, double y) {
     scrollDelta += static_cast<float>(y);
 }
@@ -676,6 +677,134 @@ void Application::drawSaturnRing(const glm::mat4 &view, const glm::mat4 &project
     glActiveTexture(GL_TEXTURE0);
 }
 
+void Application::drawOrbitLines(const glm::mat4 &view, const glm::mat4 &projection) {
+    GLint oldProgram = 0;
+    GLint oldVao = 0;
+    GLint oldDepthFunction = GL_LESS;
+    GLint oldSrcRgb = GL_ONE;
+    GLint oldDstRgb = GL_ZERO;
+    GLint oldSrcAlpha = GL_ONE;
+    GLint oldDstAlpha = GL_ZERO;
+    GLfloat oldLineWidth = 1.0f;
+    GLboolean oldDepthWrite = GL_TRUE;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &oldProgram);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &oldVao);
+    glGetIntegerv(GL_DEPTH_FUNC, &oldDepthFunction);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &oldSrcRgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &oldDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &oldSrcAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &oldDstAlpha);
+    glGetFloatv(GL_LINE_WIDTH, &oldLineWidth);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &oldDepthWrite);
+    const GLboolean oldDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean oldCull = glIsEnabled(GL_CULL_FACE);
+    const GLboolean oldBlend = glIsEnabled(GL_BLEND);
+
+    // Guides are drawn below the opaque bodies so their silhouettes always cover them.
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glLineWidth(1.0f);
+    orbitShader.use();
+    orbitShader.set("view", view);
+    orbitShader.set("projection", projection);
+    orbitShader.set("model", glm::mat4(1.0f));
+    orbitShader.set("color", glm::vec3(0.26f, 0.31f, 0.42f));
+    orbitShader.set("lineAlpha", 0.48f);
+    for (const Mesh &orbitLine : orbitLines)
+        orbitLine.drawOrbit();
+
+    glDepthMask(oldDepthWrite);
+    glDepthFunc(static_cast<GLenum>(oldDepthFunction));
+    if (oldDepthTest)
+        glEnable(GL_DEPTH_TEST);
+    else
+        glDisable(GL_DEPTH_TEST);
+    if (oldCull)
+        glEnable(GL_CULL_FACE);
+    else
+        glDisable(GL_CULL_FACE);
+    glBlendFuncSeparate(static_cast<GLenum>(oldSrcRgb), static_cast<GLenum>(oldDstRgb),
+                        static_cast<GLenum>(oldSrcAlpha), static_cast<GLenum>(oldDstAlpha));
+    if (oldBlend)
+        glEnable(GL_BLEND);
+    else
+        glDisable(GL_BLEND);
+    glLineWidth(oldLineWidth);
+    glUseProgram(static_cast<GLuint>(oldProgram));
+    glBindVertexArray(static_cast<GLuint>(oldVao));
+}
+
+void Application::drawSelectionRing(const glm::mat4 &view, const glm::mat4 &projection) {
+    if (selected < 0)
+        return;
+
+    const BodyEffect effect = bodyEffect(selected);
+    if (effect.swallowed || effect.opacity <= 0.0f)
+        return;
+
+    const float radius = selected == 8 ? 1.25f : bodies[static_cast<std::size_t>(selected)].radius;
+    const float ringRadius = radius * effect.perpendicularScale * 1.35f;
+    const glm::mat4 ringModel =
+        glm::translate(glm::mat4(1.0f), effect.position) *
+        glm::scale(glm::mat4(1.0f), glm::vec3(ringRadius, 1.0f, ringRadius));
+    GLint oldProgram = 0;
+    GLint oldVao = 0;
+    GLint oldDepthFunction = GL_LESS;
+    GLboolean oldDepthWrite = GL_TRUE;
+    const GLboolean oldDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean oldCull = glIsEnabled(GL_CULL_FACE);
+    const GLboolean oldBlend = glIsEnabled(GL_BLEND);
+    GLint oldSrcRgb = GL_ONE;
+    GLint oldDstRgb = GL_ZERO;
+    GLint oldSrcAlpha = GL_ONE;
+    GLint oldDstAlpha = GL_ZERO;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &oldProgram);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &oldVao);
+    glGetIntegerv(GL_DEPTH_FUNC, &oldDepthFunction);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &oldDepthWrite);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &oldSrcRgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &oldDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &oldSrcAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &oldDstAlpha);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    orbitShader.use();
+    orbitShader.set("view", view);
+    orbitShader.set("projection", projection);
+    orbitShader.set("model", ringModel);
+    orbitShader.set("color", glm::vec3(1.0f, 0.85f, 0.25f));
+    orbitShader.set("lineAlpha", 0.92f * effect.opacity);
+    highlightRing.drawOrbit();
+
+    glDepthMask(oldDepthWrite);
+    glDepthFunc(static_cast<GLenum>(oldDepthFunction));
+    if (oldDepthTest)
+        glEnable(GL_DEPTH_TEST);
+    else
+        glDisable(GL_DEPTH_TEST);
+    if (oldCull)
+        glEnable(GL_CULL_FACE);
+    else
+        glDisable(GL_CULL_FACE);
+    glBlendFuncSeparate(static_cast<GLenum>(oldSrcRgb), static_cast<GLenum>(oldDstRgb),
+                        static_cast<GLenum>(oldSrcAlpha), static_cast<GLenum>(oldDstAlpha));
+    if (oldBlend)
+        glEnable(GL_BLEND);
+    else
+        glDisable(GL_BLEND);
+    glUseProgram(static_cast<GLuint>(oldProgram));
+    glBindVertexArray(static_cast<GLuint>(oldVao));
+}
+
 void Application::drawSky(const glm::mat4 &view, const glm::mat4 &projection) {
     skyShader.use();
     skyShader.set("view", glm::mat4(glm::mat3(view)));
@@ -945,30 +1074,10 @@ void Application::run() {
         const glm::mat4 projection =
             glm::perspective(glm::radians(45.0f), static_cast<float>(width) / height, 0.1f, 100.0f);
         drawSky(view, projection);
-        orbitShader.use();
-        orbitShader.set("view", view);
-        orbitShader.set("projection", projection);
-        glDisable(GL_CULL_FACE);
-        for (std::size_t i = 0; i < bodies.size(); ++i) {
-            orbitShader.set("model", glm::mat4(1));
-            orbitShader.set("color", glm::vec3(0.26f, 0.31f, 0.42f));
-            orbitLines[i].drawOrbit();
-        }
-        if (selected >= 0) {
-            const glm::vec3 position = bodyEffect(selected).position;
-            const float radius =
-                selected == 8 ? 1.25f : bodies[static_cast<std::size_t>(selected)].radius;
-            const glm::mat4 ringModel =
-                glm::translate(glm::mat4(1), position + glm::vec3(0, radius * 1.15f, 0)) *
-                glm::scale(glm::mat4(1), glm::vec3(radius * 1.35f, 1, radius * 1.35f));
-            orbitShader.set("model", ringModel);
-            orbitShader.set("color", glm::vec3(1.0f, 0.85f, 0.25f));
-            highlightRing.drawOrbit();
-        }
-        glEnable(GL_CULL_FACE);
         shader.use();
         shader.set("view", view);
         shader.set("projection", projection);
+        drawOrbitLines(view, projection);
         for (const Body &body : bodies)
             draw(body, view, projection);
         sunBody.radius = 1.25f;
@@ -978,6 +1087,7 @@ void Application::run() {
         draw(sunBody, view, projection, true);
         blackHole.draw(view, projection, currentCamera, simTime);
         drawSaturnRing(view, projection);
+        drawSelectionRing(view, projection);
 
         postProcess.endScene();
         const GLuint hdrSceneTexture = postProcess.getHdrSceneColorTexture();

@@ -42,8 +42,10 @@ The window can be resized and safely handles a minimized framebuffer. Team name 
 
 **Done (Earth and Saturn renderer):** Earth has a soft day/night terminator, night-side city lights, procedural ocean/land and cloud fallbacks, a separately rotating cloud shell, optional normal/specular maps, and an additive Fresnel atmosphere. Saturn has a tilted, alpha-blended ring with procedural band/gap fallback, Saturn shadowing the ring, and the ring shadowing Saturn. All Earth layers and the ring follow the body's black-hole transform and fade. Optional textures are read from `assets/textures/`; no texture files are included, and the app uses procedural fallbacks.
 
+**Done (orbit visibility and selection):** Thin, translucent orbit guides render before opaque bodies so each planet's silhouette covers the guide across its projected disk. The selected body's ecliptic ring is centered on its current transformed position and scaled with its radius and black-hole deformation; the depth buffer hides the far part of the ring.
+
 **Partial:** `I` changes HUD state only; instancing is not implemented. The old timer threat remains as an explicitly marked fallback alternative; the real black hole is selected by default. Scene sizes and distances are stylized, and the lensing/spaghettification are illustrative screen-space and transform effects rather than a physical simulation.
 
-**Missing:** No requested HDR, bloom, tone-mapping, G, or Q items are missing. Decorative planetary rings and instancing are outside this module.
+**Missing:** No requested HDR, bloom, tone-mapping, G, or Q items are missing. Decorative planetary rings and instancing are outside this module. Visual verification of the final orbit and selection changes remains partial because the rebuilt app did not expose a targetable window in this environment.
 
 Build uses CMake FetchContent and requires dependency sources at configure time. A successful clean-source verification is reported with the project handoff, not assumed from this README.
