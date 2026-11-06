@@ -51,6 +51,8 @@ The window can be resized and safely handles a minimized framebuffer. Team name 
 
 **Done (black-hole gameplay):** The 90-second-at-1x threat can be returned along the same eased progress curve. Mission loss offers Restart and Back to menu; Free Explore offers a swallowed-Sun ending with Restart or Keep watching, and R restarts after swallowing. Asteroids and meteors follow the black hole without accumulated drift; asteroid-versus-planet repulsion remains active.
 
+**Done (Milky Way view):** Free Explore has a Solar System / Milky Way view toggle and Y shortcut while the black hole is Idle. Smooth simulation-time transitions render bounded, glowing camera-facing trails and a subtle starfield parallax; physics and picking remain Sun-centred. Trails pause with Space, scale with simulation speed, and clear on restart. This view is a stylized visualization.
+
 **Partial:** Visual checks for resizing/DPI, Earth, quiz/Q, lensing (B/L), and numeric performance across instanced/non-instanced consuming modes remain to be done. The old timer threat remains as a marked fallback; scene scales and black-hole effects are illustrative rather than physically simulated.
 
 **Missing:** No requested renderer feature remains unimplemented. Optional Earth texture images are not included.

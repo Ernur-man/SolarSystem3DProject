@@ -119,6 +119,10 @@ The glow is linear HDR emission above 1.0 and enters the bloom input. Current Ma
 
 No FPS measurements were collected in this environment; no performance values are claimed.
 
+## Milky Way view trails
+
+The view is a stylized visualization. Solar System physics, picking and black-hole effects stay in the original Sun-centred coordinates. The galactic drift is `D(t) = galaxyDir * kGalaxySpeed * galaxyTime`, where `galaxyDir` is tilted 60 degrees above the ecliptic and time advances only with the simulation while Milky Way mode is active. At fixed simulation-time intervals each final body position `p_i` is stored in a bounded ring buffer as `G_i = D(t_i) + p_i`; rendering subtracts the current offset, `G_i - D(now)`, so the bodies remain in the original frame while their trails stream behind them. Ribbon opacity follows `alpha = (1 - age)^2 * g`, where `g` is the eased two-second transition. The Sun has a straight trail, and planets plus the Moon use their black-hole-adjusted render positions. High quality retains up to 1,200 points per body; Low shows at most 500. Y or the panel toggle is available in Free Explore with the black hole Idle; Space pauses trail growth and speed changes its simulated-time rate.
+
 ## Earth day/night, clouds, and atmosphere
 
 Earth uses optional sRGB day, night, and cloud maps; normal and specular maps are sampled as linear data. Missing maps are reported with their file paths and use the corresponding shader fallback. In the fallback, four-octave FBM at scale 2.7 makes connected continents, thresholded around sea level 0.50. A shallow-water transition adds cyan near coasts; a separate terrain FBM field selects green lowlands, brown/olive highlands, sandy dry equatorial areas, snowy peaks, and polar ice. The fallback ocean mask alone gets a Blinn-Phong specular highlight. The surface combines day and night with a soft terminator:

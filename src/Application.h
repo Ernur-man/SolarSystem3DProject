@@ -12,6 +12,10 @@
 #include <vector>
 #include <array>
 
+struct GalaxyTrailPoint { glm::vec3 position; };
+struct GalaxyTrail { std::vector<GalaxyTrailPoint> points; std::size_t head = 0, count = 0; };
+struct TrailVertex { glm::vec3 position; glm::vec4 color; float edge; };
+
 enum class GameState { StartScreen, FreeExplore, Mission, Won, Lost };
 
 struct Body {
@@ -66,6 +70,7 @@ private:
     Shader skyShader;
     Shader orbitShader;
     Shader meteorShader;
+    Shader trailShader;
     Shader asteroidShader;
     Mesh sphere;
     Mesh lowDetailSphere;
@@ -74,6 +79,9 @@ private:
     Mesh earthMoonOrbitLine;
     GLuint meteorQuadVao = 0;
     GLuint meteorQuadVbo = 0;
+    GLuint trailVao = 0, trailVbo = 0;
+    std::array<GalaxyTrail, 10> galaxyTrails;
+    std::vector<TrailVertex> trailVertices;
     std::vector<Meteor> meteors;
     Mesh asteroidMesh;
     GLuint asteroidInstanceVbo = 0;
@@ -110,6 +118,10 @@ private:
     float lightAngle = 0.0f;
     int screenshotIndex = 1;
     float simTime = 0;
+    float galaxyTime = 0.0f, galaxyBlend = 0.0f, galaxyTransition = 0.0f;
+    float trailSampleClock = 0.0f;
+    bool galaxyViewTarget = false;
+    bool lastYDown = false;
     float yaw = 0;
     float pitch = 0.25f;
     float distance = 22;
@@ -180,4 +192,8 @@ private:
     ThreatInterface &activeThreat();
     BodyEffect bodyEffect(int index) const;
     glm::vec3 earthMoonPosition() const;
+    void updateGalaxy(float simulationDelta);
+    void drawGalaxyTrails(const glm::mat4 &view, const glm::mat4 &projection);
+    glm::vec3 galaxyDisplacement() const;
+    void resetGalaxyView();
 };

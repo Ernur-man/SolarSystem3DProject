@@ -35,6 +35,10 @@ constexpr float EARTH_MOON_ORBIT_RADIUS = 1.02f;
 constexpr float EARTH_MOON_RADIUS = 0.105f;
 // One full ring-pattern revolution per 25 simulated seconds at 1x.
 constexpr float kRingSpinSpeed = 6.2831853f / 25.0f;
+// Galactic drift in scene units per simulated second at 1x.
+constexpr float kGalaxySpeed = 0.34f;
+constexpr float kTrailSampleSeconds = 0.12f;
+constexpr std::size_t kTrailCapacity = 1200;
 constexpr std::size_t ASTEROID_COUNT_HIGH = 4000;
 constexpr std::size_t ASTEROID_COUNT_LOW = 1800;
 // Three-radius clearances cross in this stylized system (8.0 > 6.95); use 1.5R margins.
@@ -117,6 +121,9 @@ Application::~Application() {
         glDeleteBuffers(1, &meteorQuadVbo);
     if (meteorQuadVao != 0)
         glDeleteVertexArrays(1, &meteorQuadVao);
+    if (trailVbo != 0) glDeleteBuffers(1, &trailVbo);
+    if (trailVao != 0) glDeleteVertexArrays(1, &trailVao);
+    if (trailShader.id != 0) glDeleteProgram(trailShader.id);
     if (asteroidInstanceVbo != 0)
         glDeleteBuffers(1, &asteroidInstanceVbo);
     if (asteroidShader.id != 0)
@@ -261,9 +268,25 @@ bool Application::init() {
         !ringShader.load("shaders/ring.vert", "shaders/ring.frag") ||
         !skyShader.load("shaders/sky.vert", "shaders/sky.frag") ||
         !orbitShader.load("shaders/orbit.vert", "shaders/orbit.frag") ||
+        !trailShader.load("shaders/trail.vert", "shaders/trail.frag") ||
         !asteroidShader.load("shaders/asteroid.vert", "shaders/asteroid.frag") ||
         !meteorShader.load("shaders/meteor.vert", "shaders/meteor.frag"))
         return false;
+    glGenVertexArrays(1, &trailVao);
+    glGenBuffers(1, &trailVbo);
+    glBindVertexArray(trailVao);
+    glBindBuffer(GL_ARRAY_BUFFER, trailVbo);
+    glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(TrailVertex), nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(TrailVertex),
+                          reinterpret_cast<void *>(offsetof(TrailVertex, color)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(TrailVertex),
+                          reinterpret_cast<void *>(offsetof(TrailVertex, edge)));
+    glBindVertexArray(0);
+    for (GalaxyTrail &trail : galaxyTrails) trail.points.resize(kTrailCapacity);
     skyTexture.load("assets/textures/stars_milky_way.jpg", true, "procedural starfield");
     earthDayTexture.load("assets/textures/earth_day.jpg", true, "procedural Earth surface");
     earthNightTexture.load("assets/textures/earth_night.jpg", true, "procedural city lights");
@@ -398,9 +421,117 @@ void Application::applyQualitySettings() {
 }
 
 glm::vec3 Application::cameraPosition() const {
-    return cameraTarget + glm::vec3(distance * std::cos(pitch) * std::sin(yaw),
-                                    distance * std::sin(pitch),
-                                    distance * std::cos(pitch) * std::cos(yaw));
+    const float cameraDistance = distance + galaxyBlend * overviewDistance * 1.35f;
+    return cameraTarget + glm::vec3(cameraDistance * std::cos(pitch) * std::sin(yaw),
+                                    cameraDistance * std::sin(pitch),
+                                    cameraDistance * std::cos(pitch) * std::cos(yaw));
+}
+
+glm::vec3 Application::galaxyDisplacement() const {
+    // The direction is 60 degrees above the ecliptic plane (the XZ plane).
+    return glm::normalize(glm::vec3(0.5f, 0.8660254f, 0.0f)) *
+           (kGalaxySpeed * galaxyTime * galaxyBlend);
+}
+
+void Application::resetGalaxyView() {
+    galaxyViewTarget = false; galaxyBlend = 0.0f; galaxyTransition = 0.0f;
+    galaxyTime = 0.0f; trailSampleClock = 0.0f;
+    for (GalaxyTrail &trail : galaxyTrails) { trail.head = 0; trail.count = 0; }
+}
+
+void Application::updateGalaxy(float simulationDelta) {
+    const float oldBlend = galaxyBlend;
+    if (simulationDelta <= 0.0f) return;
+    if (gameState == GameState::FreeExplore && galaxyViewTarget) galaxyTime += simulationDelta;
+    const float direction = galaxyViewTarget ? 1.0f : -1.0f;
+    galaxyTransition = std::clamp(galaxyTransition + direction * simulationDelta / 2.0f, 0.0f, 1.0f);
+    galaxyBlend = galaxyTransition * galaxyTransition * (3.0f - 2.0f * galaxyTransition);
+    if (galaxyViewTarget && gameState == GameState::FreeExplore && galaxyBlend > 0.0f) {
+        const float interval = kTrailSampleSeconds;
+        float timeToSample = interval - trailSampleClock;
+        while (timeToSample <= simulationDelta) {
+            const float fraction = timeToSample / simulationDelta;
+            const float sampleTime = simTime - simulationDelta + timeToSample;
+            const float sampleGalaxyTime = galaxyTime - simulationDelta + timeToSample;
+            const float sampleBlend = glm::mix(oldBlend, galaxyBlend, fraction);
+            const glm::vec3 offset = glm::normalize(glm::vec3(0.5f, 0.8660254f, 0.0f)) *
+                                     (kGalaxySpeed * sampleGalaxyTime * sampleBlend);
+            for (int i = 0; i < 10; ++i) {
+                glm::vec3 position = bodyPosition(i, sampleTime);
+                if (i == 9) {
+                    const float moonAngle = sampleTime * 6.2831853f * 12.0f / ORBIT_BASE_SECONDS;
+                    position = bodyPosition(2, sampleTime) + glm::vec3(
+                        EARTH_MOON_ORBIT_RADIUS * std::cos(moonAngle), 0.0f,
+                        EARTH_MOON_ORBIT_RADIUS * std::sin(moonAngle));
+                }
+                GalaxyTrail &trail = galaxyTrails[static_cast<std::size_t>(i)];
+                trail.points[trail.head].position = offset + position;
+                trail.head = (trail.head + 1) % trail.points.size();
+                const std::size_t activeCapacity = highQuality ? kTrailCapacity : 500u;
+                trail.count = std::min(trail.count + 1, activeCapacity);
+            }
+            timeToSample += interval;
+        }
+        trailSampleClock = std::fmod(trailSampleClock + simulationDelta, interval);
+    }
+    if (galaxyTransition == 0.0f && !galaxyViewTarget)
+        for (GalaxyTrail &trail : galaxyTrails) { trail.head = 0; trail.count = 0; }
+}
+
+void Application::drawGalaxyTrails(const glm::mat4 &view, const glm::mat4 &projection) {
+    if (galaxyBlend <= 0.001f) return;
+    trailVertices.clear();
+    const glm::vec3 camera = currentCamera;
+    const std::array<glm::vec3, 10> colors = {
+        glm::vec3(.20f,.52f,1), glm::vec3(.25f,.48f,1), glm::vec3(.15f,.90f,1),
+        glm::vec3(.50f,.30f,1), glm::vec3(.65f,.42f,1), glm::vec3(.90f,.48f,.28f),
+        glm::vec3(.30f,.62f,1), glm::vec3(.22f,.38f,1), glm::vec3(.35f,.65f,1),
+        glm::vec3(.18f,.88f,1)};
+    const glm::vec3 offset = galaxyDisplacement();
+    for (std::size_t i = 0; i < galaxyTrails.size(); ++i) {
+        const GalaxyTrail &trail = galaxyTrails[i];
+        const std::size_t count = std::min(trail.count, highQuality ? kTrailCapacity : 500u);
+        if (count < 2) continue;
+        for (std::size_t p = 1; p < count; ++p) {
+            const std::size_t oldIndex = (trail.head + trail.points.size() - count + p - 1) % trail.points.size();
+            const std::size_t newIndex = (oldIndex + 1) % trail.points.size();
+            const glm::vec3 a = trail.points[oldIndex].position - offset;
+            const glm::vec3 b = trail.points[newIndex].position - offset;
+            const glm::vec3 tangent = glm::normalize(b - a);
+            glm::vec3 side = glm::cross(tangent, camera - (a + b) * .5f);
+            if (glm::length(side) < .001f) side = glm::cross(tangent, glm::vec3(0,1,0));
+            side = glm::normalize(side) * .045f;
+            const float age = 1.0f - static_cast<float>(p - 1) /
+                                           static_cast<float>(count - 1);
+            const float alpha = (1.0f-age)*(1.0f-age)*galaxyBlend;
+            const float light = 0.35f + 2.0f * (1.0f-age);
+            const glm::vec4 color(colors[i] * light, alpha);
+            const TrailVertex al{a-side,color,-1}, ar{a+side,color,1}, bl{b-side,color,-1}, br{b+side,color,1};
+            trailVertices.insert(trailVertices.end(), {al, ar, bl, ar, br, bl});
+        }
+    }
+    if (trailVertices.empty()) return;
+    GLboolean oldDepthWrite = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &oldDepthWrite);
+    const GLboolean oldBlend = glIsEnabled(GL_BLEND);
+    GLint oldSrcRgb = GL_ONE, oldDstRgb = GL_ZERO, oldSrcAlpha = GL_ONE, oldDstAlpha = GL_ZERO;
+    GLint oldProgram = 0, oldVao = 0, oldArrayBuffer = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &oldProgram);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &oldVao);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &oldArrayBuffer);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &oldSrcRgb); glGetIntegerv(GL_BLEND_DST_RGB, &oldDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &oldSrcAlpha); glGetIntegerv(GL_BLEND_DST_ALPHA, &oldDstAlpha);
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE); glDepthMask(GL_FALSE);
+    trailShader.use(); trailShader.set("view", view); trailShader.set("projection", projection);
+    glBindVertexArray(trailVao); glBindBuffer(GL_ARRAY_BUFFER, trailVbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(trailVertices.size()*sizeof(TrailVertex)), trailVertices.data(), GL_DYNAMIC_DRAW);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(trailVertices.size()));
+    glBindVertexArray(static_cast<GLuint>(oldVao));
+    glBindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(oldArrayBuffer));
+    glUseProgram(static_cast<GLuint>(oldProgram));
+    glDepthMask(oldDepthWrite);
+    glBlendFuncSeparate(oldSrcRgb, oldDstRgb, oldSrcAlpha, oldDstAlpha);
+    if (!oldBlend) glDisable(GL_BLEND);
 }
 
 glm::vec3 Application::bodyPosition(int index, float time) const {
@@ -465,6 +596,7 @@ void Application::beginQuiz() {
 }
 
 void Application::startMission(bool summonHole) {
+    resetGalaxyView();
     gameState = GameState::Mission;
     missionScore = 0;
     visitedBodies.fill(false);
@@ -1050,6 +1182,7 @@ void Application::drawSky(const glm::mat4 &view, const glm::mat4 &projection) {
     skyShader.use();
     skyShader.set("view", glm::mat4(glm::mat3(view)));
     skyShader.set("projection", projection);
+    skyShader.set("skyParallax", -galaxyDisplacement() * 0.0008f);
     skyShader.set("model", glm::scale(glm::mat4(1.0f), glm::vec3(90.0f)));
     skyShader.set("useTexture", skyTexture.isLoaded() ? 1 : 0);
     skyTexture.bind();
@@ -1093,6 +1226,14 @@ void Application::input(float deltaTime) {
     const bool f1 = glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS;
     const bool h = glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS;
     const bool r = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
+    const bool keyY = glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS;
+    if (keyY && !lastYDown && gameState == GameState::FreeExplore && blackHole.isIdle()) {
+        galaxyViewTarget = !galaxyViewTarget;
+        if (galaxyViewTarget && galaxyTransition == 0.0f)
+            for (GalaxyTrail &trail : galaxyTrails) { trail.head = 0; trail.count = 0; }
+        std::cout << "View: " << (galaxyViewTarget ? "Milky Way" : "Solar System") << '\n';
+    }
+    lastYDown = keyY;
     const bool f12 = glfwGetKey(window, GLFW_KEY_F12) == GLFW_PRESS;
     if (g && !lastGDown) {
         bloom = !bloom;
@@ -1118,6 +1259,10 @@ void Application::input(float deltaTime) {
     if (b && !lastBDown) {
         if (gameState == GameState::Mission || gameState == GameState::FreeExplore) {
             if (blackHole.isIdle()) {
+                if (galaxyViewTarget) {
+                    galaxyViewTarget = false;
+                    std::cout << "View: Solar System (black hole active)\n";
+                }
                 freeExploreSwallowedDismissed = false;
                 blackHole.summon();
             } else {
@@ -1282,9 +1427,11 @@ void Application::run() {
         }
         const bool gameplayActive =
             gameState == GameState::Mission || gameState == GameState::FreeExplore;
-        if (gameplayActive && !paused && !quizOpen)
-            simTime += dt * static_cast<float>(speed);
-        const float threatDeltaTime = !paused && !quizOpen ? dt * static_cast<float>(speed) : 0.0f;
+        const float simulationDelta = gameplayActive && !paused && !quizOpen
+                                          ? dt * static_cast<float>(speed) : 0.0f;
+        if (simulationDelta > 0.0f)
+            simTime += simulationDelta;
+        const float threatDeltaTime = simulationDelta;
         if (gameState == GameState::Mission)
             updateMission(threatDeltaTime);
         else if (gameState == GameState::FreeExplore) {
@@ -1292,6 +1439,7 @@ void Application::run() {
             if (blackHole.isSunSwallowed())
                 paused = true;
         }
+        updateGalaxy(simulationDelta);
         if (selected >= 0 && bodyEffect(selected).swallowed) {
             selected = -1;
             distance = overviewDistance;
@@ -1308,10 +1456,8 @@ void Application::run() {
             const glm::vec3 endTarget =
                 selected >= 0 ? bodyEffect(selected).position : glm::vec3(0);
             const glm::vec3 endCamera = selected >= 0
-                                            ? endTarget + flyCameraOffset
-                                            : glm::vec3(distance * std::cos(pitch) * std::sin(yaw),
-                                                        distance * std::sin(pitch),
-                                                        distance * std::cos(pitch) * std::cos(yaw));
+                                            ? endTarget + flyCameraOffset * (1.0f + galaxyBlend * 1.35f)
+                                            : endTarget + (cameraPosition() - cameraTarget);
             cameraTarget = glm::mix(startTarget, endTarget, eased);
             currentCamera = glm::mix(startCamera, endCamera, eased);
             if (t >= 1.0f)
@@ -1319,7 +1465,7 @@ void Application::run() {
         } else if (selected >= 0 && !freeFly) {
             const glm::vec3 target = bodyEffect(selected).position;
             cameraTarget = target;
-            currentCamera = target + flyCameraOffset;
+            currentCamera = target + flyCameraOffset * (1.0f + galaxyBlend * 1.35f);
         } else if (!freeFly) {
             currentCamera = cameraPosition();
         }
@@ -1334,6 +1480,16 @@ void Application::run() {
         orbitShader.use();
         orbitShader.set("view", view);
         orbitShader.set("projection", projection);
+        orbitShader.set("alpha", 1.0f - galaxyBlend);
+        const GLboolean oldLineBlend = glIsEnabled(GL_BLEND);
+        GLint oldLineSrc = GL_ONE, oldLineDst = GL_ZERO, oldLineSrcAlpha = GL_ONE,
+              oldLineDstAlpha = GL_ZERO;
+        glGetIntegerv(GL_BLEND_SRC_RGB, &oldLineSrc);
+        glGetIntegerv(GL_BLEND_DST_RGB, &oldLineDst);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA, &oldLineSrcAlpha);
+        glGetIntegerv(GL_BLEND_DST_ALPHA, &oldLineDstAlpha);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         GLboolean oldOrbitDepthWrite = GL_TRUE;
         glGetBooleanv(GL_DEPTH_WRITEMASK, &oldOrbitDepthWrite);
         glDepthMask(GL_FALSE);
@@ -1360,6 +1516,8 @@ void Application::run() {
         }
         glDepthMask(oldOrbitDepthWrite);
         glEnable(GL_CULL_FACE);
+        glBlendFuncSeparate(oldLineSrc, oldLineDst, oldLineSrcAlpha, oldLineDstAlpha);
+        if (!oldLineBlend) glDisable(GL_BLEND);
         shader.use();
         shader.set("view", view);
         shader.set("projection", projection);
@@ -1375,6 +1533,7 @@ void Application::run() {
         drawSaturnRing(view, projection);
         drawAsteroids(view, projection);
         drawMeteors(view, projection);
+        drawGalaxyTrails(view, projection);
 
         postProcess.endScene();
         const GLuint hdrSceneTexture = postProcess.getHdrSceneColorTexture();
@@ -1405,6 +1564,25 @@ void Application::run() {
             missionStatus = "Sun swallowed";
         ImGui::Text("Status: %s | Score: %d / %d", missionStatus, missionScore,
                     MISSION_TARGET_SCORE);
+        const char *viewName = galaxyViewTarget ? "Milky Way" : "Solar System";
+        ImGui::Text("View: %s", viewName);
+        const bool canChangeView = gameState == GameState::FreeExplore && blackHole.isIdle();
+        ImGui::BeginDisabled(!canChangeView);
+        if (ImGui::Button("Solar System")) {
+            galaxyViewTarget = false;
+            std::cout << "View: Solar System\n";
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Milky Way")) {
+            if (!galaxyViewTarget && galaxyTransition == 0.0f)
+                for (GalaxyTrail &trail : galaxyTrails) { trail.head = 0; trail.count = 0; }
+            galaxyViewTarget = true;
+            std::cout << "View: Milky Way\n";
+        }
+        ImGui::EndDisabled();
+        if (!canChangeView && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Available in Free Explore while the black hole is Idle.");
+        ImGui::TextDisabled("Milky Way mode is a stylized visualization.");
         ImGui::Text("Bloom %s | Instancing %s", bloom ? "ON" : "OFF",
                     instancing ? "ON" : "OFF");
         ImGui::Text("Meteors: %s", meteorsEnabled ? "ON" : "OFF");
@@ -1471,6 +1649,7 @@ void Application::run() {
             ImGui::Text("G: toggle bloom state | L: toggle lensing state");
             ImGui::Text("I: toggle asteroid instancing | Q: toggle high / low quality");
             ImGui::Text("M: toggle meteors");
+            ImGui::Text("Y: toggle Milky Way view in Free Explore (black hole Idle)");
             ImGui::Text("Planet maps are optional; procedural surfaces and Earth's Moon work without files");
             ImGui::Text("B: summon / return black hole | R: return or restart after swallow in Free Explore");
             ImGui::Text("R restarts an active or finished Mission; Free Explore ending offers Restart / Keep watching");

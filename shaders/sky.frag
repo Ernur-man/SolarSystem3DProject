@@ -5,6 +5,7 @@ out vec4 FragColor;
 
 uniform sampler2D starTexture;
 uniform bool useTexture;
+uniform vec3 skyParallax;
 
 float hash3(vec3 p) {
     return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
@@ -24,7 +25,7 @@ float valueNoise(vec2 p) {
 }
 
 void main() {
-    vec3 d = normalize(direction);
+    vec3 d = normalize(direction + skyParallax);
     float longitude = atan(d.z, d.x);
     float latitude = asin(clamp(d.y, -1.0, 1.0));
     vec2 uv = vec2(longitude / (2.0 * 3.14159265) + 0.5, latitude / 3.14159265 + 0.5);
