@@ -1,4 +1,6 @@
 #include "Application.h"
+#include "UiTheme.h"
+#include "UiPanels.h"
 
 #include <glad/glad.h>
 #include <imgui.h>
@@ -18,6 +20,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -39,6 +42,7 @@ constexpr float kRingSpinSpeed = 6.2831853f / 25.0f;
 constexpr float kGalaxySpeed = 0.34f;
 constexpr float kTrailSampleSeconds = 0.12f;
 constexpr std::size_t kTrailCapacity = 1200;
+constexpr bool kPanelOnRight = true;
 constexpr std::size_t ASTEROID_COUNT_HIGH = 4000;
 constexpr std::size_t ASTEROID_COUNT_LOW = 1800;
 // Three-radius clearances cross in this stylized system (8.0 > 6.95); use 1.5R margins.
@@ -216,6 +220,22 @@ bool Application::loadData() {
         std::copy(choices.begin(), choices.end(), question.choices.begin());
         questions.push_back(question);
     }
+    for (QuizRandomizer::QuestionBag &bag : quizQuestionBags)
+        bag.pool.clear();
+    for (std::size_t questionIndex = 0; questionIndex < questions.size(); ++questionIndex) {
+        const QuizQuestion &question = questions[questionIndex];
+        std::size_t worldIndex = 8;
+        if (question.planet != "Sun") {
+            const auto body = std::find_if(bodies.begin(), bodies.end(),
+                                           [&](const Body &entry) {
+                                               return entry.name == question.planet;
+                                           });
+            if (body == bodies.end())
+                continue;
+            worldIndex = static_cast<std::size_t>(std::distance(bodies.begin(), body));
+        }
+        quizQuestionBags[worldIndex].pool.push_back(questionIndex);
+    }
     for (const std::string &name :
          {"Sun", "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"}) {
         std::vector<std::string> uniqueQuestions;
@@ -305,6 +325,7 @@ bool Application::init() {
     ImGui::CreateContext();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330 core");
+    UiTheme::setup(window);
     bodies = {{"Mercury", 3, 0.22f, 58.6f, {0.62f, 0.57f, 0.52f}},
               {"Venus", 4.2f, 0.34f, 243.0f, {0.86f, 0.62f, 0.31f}},
               {"Earth", 5.7f, 0.38f, 0.997f, {0.14f, 0.42f, 0.93f}},
@@ -573,26 +594,39 @@ void Application::selectBody(int index) {
 }
 
 void Application::beginQuiz() {
-    quizRound.clear();
-    std::vector<std::size_t> candidates;
     const std::string name =
         selected == 8 ? "Sun" : bodies[static_cast<std::size_t>(selected)].name;
-    for (std::size_t i = 0; i < questions.size(); ++i)
-        if (questions[i].planet == name)
-            candidates.push_back(i);
-    std::mt19937 random(std::random_device{}());
-    std::shuffle(candidates.begin(), candidates.end(), random);
-    if (candidates.size() < 5)
+    activeQuizSeed = QuizRandomizer::nextSeed(quizSeedSequence);
+    quizRandom.seed(activeQuizSeed);
+    std::cout << "Quiz seed for " << name << ": " << activeQuizSeed << '\n';
+    QuizRandomizer::QuestionBag &bag = quizQuestionBags[static_cast<std::size_t>(selected)];
+    if (bag.pool.size() < 5)
         std::cerr << "Warning: fewer than five quiz questions available for " << name << '\n';
-    if (candidates.size() > 5)
-        candidates.resize(5);
-    quizRound = candidates;
+    QuizRandomizer::prepareQuizRound(bag, quizRandom, 5, quizRound);
     quizQuestionIndex = 0;
     quizScore = 0;
+    quizChoice = -1;
     quizAnswered = false;
     quizFinished = quizRound.empty();
+    if (!quizFinished)
+        shuffleDisplayedChoices();
     quizWasPaused = paused;
     quizOpen = true;
+}
+
+void Application::initializeQuizBags() {
+    activeQuizSeed = QuizRandomizer::nextSeed(quizSeedSequence);
+    quizRandom.seed(activeQuizSeed);
+    std::cout << "Mission quiz seed: " << activeQuizSeed << '\n';
+    for (QuizRandomizer::QuestionBag &bag : quizQuestionBags)
+        QuizRandomizer::startMissionBag(bag, quizRandom);
+}
+
+void Application::shuffleDisplayedChoices() {
+    if (quizQuestionIndex >= quizRound.size())
+        return;
+    const QuizQuestion &question = questions[quizRound[quizQuestionIndex]];
+    quizDisplayChoices = QuizRandomizer::shuffleOptions(question.choices, quizRandom);
 }
 
 void Application::startMission(bool summonHole) {
@@ -626,6 +660,7 @@ void Application::startMission(bool summonHole) {
     quizQuestionIndex = 0;
     quizScore = 0;
     quizChoice = -1;
+    initializeQuizBags();
     flyElapsed = 0.0f;
     lightAngle = 0.0f;
     bloom = true;
@@ -1545,12 +1580,18 @@ void Application::run() {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        ImGui::SetNextWindowPos(ImVec2(static_cast<float>(windowWidth) - 350.0f, 0), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(350, static_cast<float>(windowHeight)), ImGuiCond_Always);
+        UiTheme::beginFrame();
+        const float maxPanelWidth = std::min(460.0f, static_cast<float>(windowWidth) * 0.40f);
+        const float requestedPanelWidth = static_cast<float>(windowWidth) * 0.26f;
+        const float panelWidth = maxPanelWidth >= 300.0f
+                                     ? std::clamp(requestedPanelWidth, 300.0f, maxPanelWidth)
+                                     : maxPanelWidth;
+        ImGui::SetNextWindowPos(ImVec2(kPanelOnRight ? static_cast<float>(windowWidth) - panelWidth : 0.0f, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(panelWidth, static_cast<float>(windowHeight)), ImGuiCond_Always);
         ImGui::Begin("Mission Control", nullptr,
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
         ImGui::Text("Team: Your Team");
-        ImGui::Text("Event Horizon: Solar System Explorer");
+        ImGui::TextWrapped("Event Horizon: Solar System Explorer");
         ImGui::Text("FPS %.0f | Speed %dx | %s", ImGui::GetIO().Framerate, speed,
                     paused ? "Paused" : "Running");
         const char *missionStatus = "Start screen";
@@ -1562,71 +1603,142 @@ void Application::run() {
             missionStatus = "Mission won";
         else if (gameState == GameState::Lost)
             missionStatus = "Sun swallowed";
-        ImGui::Text("Status: %s | Score: %d / %d", missionStatus, missionScore,
+        ImGui::TextWrapped("Status: %s | Score: %d / %d", missionStatus, missionScore,
                     MISSION_TARGET_SCORE);
+        ImGui::SeparatorText("SYSTEM STATUS");
+        const float chipAvail = ImGui::GetContentRegionAvail().x;
+        float chipRowWidth = 0.0f;
+        auto drawStatusChip = [&](const char *label, bool active, auto action) {
+            const float itemWidth = ImGui::CalcTextSize(label).x +
+                                    ImGui::GetStyle().FramePadding.x * 2.0f +
+                                    ImGui::GetStyle().ItemSpacing.x;
+            if (chipRowWidth > 0.0f && chipRowWidth + itemWidth <= chipAvail) {
+                ImGui::SameLine();
+                chipRowWidth += itemWidth;
+            } else {
+                chipRowWidth = itemWidth;
+            }
+            if (UiTheme::chip(label, active, ImVec2(0, 30))) action();
+        };
+        drawStatusChip(bloom ? "Bloom ON" : "Bloom OFF", bloom, [&] { bloom = !bloom; });
+        drawStatusChip(lensing ? "Lensing ON" : "Lensing OFF", lensing, [&] { lensing = !lensing; });
+        drawStatusChip(instancing ? "Instancing ON" : "Instancing OFF", instancing, [&] { instancing = !instancing; });
+        drawStatusChip(meteorsEnabled ? "Meteors ON" : "Meteors OFF", meteorsEnabled,
+                       [&] { meteorsEnabled = !meteorsEnabled; });
+        drawStatusChip(highQuality ? "Quality High" : "Quality Low", highQuality, [&] {
+            highQuality = !highQuality;
+            applyQualitySettings();
+        });
+        char holeChip[64];
+        std::snprintf(holeChip, sizeof(holeChip), "Black hole %s p=%.0f%%", blackHole.getStateName(),
+                      blackHole.getThreatProgress() * 100.0f);
+        drawStatusChip(holeChip, !blackHole.isIdle(), [&] {
+          if (gameplayActive) {
+            if (blackHole.isIdle()) {
+                if (galaxyViewTarget) galaxyViewTarget = false;
+                blackHole.summon();
+            } else {
+                blackHole.returnBack();
+            }
+          }
+        });
+        ImGui::Separator();
+        ImGui::BeginChild("panel_content", ImVec2(0, 0), false);
+        ImGui::TextWrapped("Bloom %s | Instancing %s | Meteors: %s | Lensing: %s",
+                    bloom ? "ON" : "OFF", instancing ? "ON" : "OFF",
+                    meteorsEnabled ? "ON" : "OFF", lensing ? "ON" : "OFF");
+        ImGui::TextWrapped("Quality: %s | Black hole: %s p=%.0f%% | Light %.1f deg",
+                    highQuality ? "High" : "Low", blackHole.getStateName(),
+                    blackHole.getThreatProgress() * 100.0f, lightAngle * 57.2957795f);
+        UiTheme::header();
         const char *viewName = galaxyViewTarget ? "Milky Way" : "Solar System";
         ImGui::Text("View: %s", viewName);
         const bool canChangeView = gameState == GameState::FreeExplore && blackHole.isIdle();
+        const float segmentWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        if (UiTheme::SmallFont) ImGui::PushFont(UiTheme::SmallFont);
         ImGui::BeginDisabled(!canChangeView);
-        if (ImGui::Button("Solar System")) {
+        if (UiTheme::chip("Solar System", !galaxyViewTarget, ImVec2(segmentWidth / UiTheme::UiScale, 30))) {
             galaxyViewTarget = false;
             std::cout << "View: Solar System\n";
         }
         ImGui::SameLine();
-        if (ImGui::Button("Milky Way")) {
+        if (UiTheme::chip("Milky Way", galaxyViewTarget, ImVec2(segmentWidth / UiTheme::UiScale, 30))) {
             if (!galaxyViewTarget && galaxyTransition == 0.0f)
                 for (GalaxyTrail &trail : galaxyTrails) { trail.head = 0; trail.count = 0; }
             galaxyViewTarget = true;
             std::cout << "View: Milky Way\n";
         }
         ImGui::EndDisabled();
+        if (UiTheme::SmallFont) ImGui::PopFont();
         if (!canChangeView && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("Available in Free Explore while the black hole is Idle.");
+        UiTheme::hero();
         ImGui::TextDisabled("Milky Way mode is a stylized visualization.");
-        ImGui::Text("Bloom %s | Instancing %s", bloom ? "ON" : "OFF",
-                    instancing ? "ON" : "OFF");
-        ImGui::Text("Meteors: %s", meteorsEnabled ? "ON" : "OFF");
-        ImGui::Text("Asteroids: %zu | draw calls: %d",
+        ImGui::TextWrapped("Asteroids: %zu | draw calls: %d",
                     highQuality ? ASTEROID_COUNT_HIGH : ASTEROID_COUNT_LOW, asteroidDrawCalls);
-        ImGui::Text("Lensing: %s", lensing ? "ON" : "OFF");
-        ImGui::Text("Quality: %s | Black hole: %s p=%.0f%% | Light %.1f deg",
-                    highQuality ? "High" : "Low", blackHole.getStateName(),
-                    blackHole.getThreatProgress() * 100.0f, lightAngle * 57.2957795f);
         if (gameState == GameState::Mission)
             ImGui::ProgressBar(activeThreat().getThreatProgress(), ImVec2(-1, 0),
                                "Threat approaching");
         ImGui::Separator();
         if (gameplayActive) {
-            ImGui::Text("Select a world");
+            ImGui::SeparatorText("WORLDS");
             for (std::size_t i = 0; i < bodies.size(); ++i) {
-                if (!bodyEffect(static_cast<int>(i)).swallowed &&
-                    ImGui::Selectable(bodies[i].name.c_str(), selected == static_cast<int>(i)))
+                if (bodyEffect(static_cast<int>(i)).swallowed) continue;
+                char subtitle[128];
+                std::snprintf(subtitle, sizeof(subtitle), "%s  |  %.1f million km from Sun",
+                              bodies[i].type.c_str(), bodies[i].distanceMillionKm);
+                const glm::vec3 tint = bodies[i].color;
+                if (UiTheme::planetCard(bodies[i].name.c_str(), subtitle,
+                                        ImVec4(tint.r, tint.g, tint.b, 1.0f),
+                                        selected == static_cast<int>(i)))
                     selectBody(static_cast<int>(i));
             }
-            if (!bodyEffect(8).swallowed && ImGui::Selectable("Sun", selected == 8))
+            if (!bodyEffect(8).swallowed &&
+                UiTheme::planetCard("Sun", "Star  |  centre of the system",
+                                    ImVec4(1.0f, 0.72f, 0.20f, 1.0f), selected == 8))
                 selectBody(8);
         }
         if (selected >= 0) {
             const Body &b = selected == 8 ? sunBody : bodies[static_cast<std::size_t>(selected)];
             ImGui::Separator();
-            ImGui::Text("%s", b.name.c_str());
-            ImGui::Text("Type: %s", b.type.c_str());
-            ImGui::Text("Diameter: %.0f km", b.diameterKm);
-            ImGui::Text("Mass: %.4g kg", b.massKg);
-            ImGui::Text("Distance from Sun: %.1f million km", b.distanceMillionKm);
-            ImGui::Text("Orbital period: %.2f days", b.orbitalDays);
-            ImGui::Text("Rotation period: %.3f days", b.rotationPeriodDays);
-            ImGui::Text("Gravity: %.2f m/s^2", b.gravity);
+            ImGui::BeginChild("world_info_card", ImVec2(0, 460.0f * UiTheme::UiScale), true);
+            ImGui::TextColored(UiTheme::Accent, "%s", b.name.c_str());
+            ImGui::TextColored(UiTheme::Secondary, "%s", b.type.c_str());
+            ImGui::Separator();
+            char value[96];
+            std::snprintf(value, sizeof(value), "%.0f km", b.diameterKm);
+            UiTheme::keyValue("Diameter", value);
+            std::snprintf(value, sizeof(value), "%.4g kg", b.massKg);
+            UiTheme::keyValue("Mass", value);
+            std::snprintf(value, sizeof(value), "%.1f million km", b.distanceMillionKm);
+            UiTheme::keyValue("Distance from Sun", value);
+            std::snprintf(value, sizeof(value), "%.2f days", b.orbitalDays);
+            UiTheme::keyValue("Orbital period", value);
+            std::snprintf(value, sizeof(value), "%.3f days", b.rotationPeriodDays);
+            UiTheme::keyValue("Rotation period", value);
+            std::snprintf(value, sizeof(value), "%.2f m/s^2", b.gravity);
+            UiTheme::keyValue("Gravity", value);
             if (b.name == "Earth")
-                ImGui::TextUnformatted("Earth: 1 moon");
-            else
-                ImGui::Text("Moons: %d", b.moons);
-            for (const std::string &fact : b.facts)
-                ImGui::BulletText("%s", fact.c_str());
-            if (ImGui::Button("Start Quiz"))
+                UiTheme::keyValue("Moons", "1");
+            else {
+                std::snprintf(value, sizeof(value), "%d", b.moons);
+                UiTheme::keyValue("Moons", value);
+            }
+            if (UiTheme::SmallFont) ImGui::PushFont(UiTheme::SmallFont);
+            for (const std::string &fact : b.facts) {
+                ImGui::Bullet();
+                ImGui::SameLine();
+                ImGui::PushTextWrapPos();
+                ImGui::TextColored(UiTheme::Secondary, "%s", fact.c_str());
+                ImGui::PopTextWrapPos();
+            }
+            if (UiTheme::SmallFont) ImGui::PopFont();
+            const float actionWidth = (ImGui::GetContentRegionAvail().x - 10.0f) * 0.5f /
+                                      UiTheme::UiScale;
+            if (UiTheme::button("Start Quiz", true, ImVec2(actionWidth, 38)))
                 beginQuiz();
             ImGui::SameLine();
-            if (ImGui::Button("Back")) {
+            if (UiTheme::button("Back", false, ImVec2(actionWidth, 38))) {
                 selected = -1;
                 distance = overviewDistance;
                 flying = true;
@@ -1634,85 +1746,75 @@ void Application::run() {
                 startCamera = currentCamera;
                 startTarget = cameraTarget;
             }
+            ImGui::EndChild();
         }
         ImGui::Separator();
         if (gameState == GameState::FreeExplore)
             ImGui::Text("Esc: back to overview");
         ImGui::TextWrapped(
             "RMB drag: camera | Wheel: zoom | F: free-fly | WASD move | Shift faster");
+        if (ImGui::CollapsingHeader("CONTROLS"))
+            UiPanels::controlsList();
+        ImGui::EndChild();
         ImGui::End();
         if (help) {
-            ImGui::Begin("Controls");
-            ImGui::Text("F1 or H: toggle this help overlay");
-            ImGui::Text("Space: pause simulation");
-            ImGui::Text("1 / 2 / 3: simulation speed 1x / 5x / 10x");
-            ImGui::Text("G: toggle bloom state | L: toggle lensing state");
-            ImGui::Text("I: toggle asteroid instancing | Q: toggle high / low quality");
-            ImGui::Text("M: toggle meteors");
-            ImGui::Text("Y: toggle Milky Way view in Free Explore (black hole Idle)");
-            ImGui::Text("Planet maps are optional; procedural surfaces and Earth's Moon work without files");
-            ImGui::Text("B: summon / return black hole | R: return or restart after swallow in Free Explore");
-            ImGui::Text("R restarts an active or finished Mission; Free Explore ending offers Restart / Keep watching");
-            ImGui::Text("F: toggle free-fly | [ / ]: rotate Sun light");
-            ImGui::Text("Esc: clear selection / return to overview");
-            ImGui::Text("F12: save screenshot");
-            ImGui::Text("Left click: select a body | Right drag: orbit camera | Wheel: zoom");
-            ImGui::Text("WASD: move in free-fly | Shift: move faster");
-            ImGui::End();
+            UiPanels::beginCenteredCard("Controls", static_cast<float>(windowWidth),
+                                        static_cast<float>(windowHeight), 620, 480);
+            ImGui::TextColored(UiTheme::Accent, "CONTROLS");
+            UiPanels::controlsList();
+            UiPanels::endCenteredCard();
         }
         if (gameState == GameState::StartScreen) {
-            ImGui::SetNextWindowPos(
-                ImVec2(static_cast<float>(windowWidth) * 0.5f,
-                       static_cast<float>(windowHeight) * 0.5f),
-                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-            ImGui::Begin("Solar System Explorer", nullptr,
-                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+            UiPanels::beginCenteredCard("Solar System Explorer", static_cast<float>(windowWidth),
+                                        static_cast<float>(windowHeight), 500, 270);
+            if (UiTheme::TitleFont) ImGui::PushFont(UiTheme::TitleFont);
+            ImGui::TextColored(UiTheme::White, "Explore the system");
+            if (UiTheme::TitleFont) ImGui::PopFont();
             ImGui::TextWrapped(
                 "Visit worlds and answer questions before the threat reaches the Sun.");
-            if (ImGui::Button("Start Mission", ImVec2(220, 0)))
+            if (UiTheme::button("Start Mission", true, ImVec2(-1, 40)))
                 startMission();
-            if (ImGui::Button("Free Explore", ImVec2(220, 0)))
+            if (UiTheme::button("Free Explore", false, ImVec2(-1, 40)))
                 startFreeExplore();
-            ImGui::End();
+            UiPanels::endCenteredCard();
         }
         if (gameState == GameState::Won || gameState == GameState::Lost) {
-            ImGui::SetNextWindowPos(
-                ImVec2(static_cast<float>(windowWidth) * 0.5f,
-                       static_cast<float>(windowHeight) * 0.5f),
-                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-            ImGui::Begin("Mission Result", nullptr,
-                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+            UiPanels::beginCenteredCard("Mission Result", static_cast<float>(windowWidth),
+                                        static_cast<float>(windowHeight), 460, 250);
+            ImGui::TextColored(UiTheme::Accent, gameState == GameState::Won ? "MISSION COMPLETE"
+                                                                            : "MISSION ENDED");
+            if (UiTheme::TitleFont) ImGui::PushFont(UiTheme::TitleFont);
             ImGui::TextUnformatted(gameState == GameState::Won ? "Mission complete"
                                                                : "The Sun was swallowed");
+            if (UiTheme::TitleFont) ImGui::PopFont();
             ImGui::Text("Final score: %d / %d", missionScore, MISSION_TARGET_SCORE);
-            if (ImGui::Button("Restart", ImVec2(220, 0)))
+            if (UiTheme::button("Restart", true, ImVec2(-1, 40)))
                 startMission();
-            if (gameState == GameState::Lost && ImGui::Button("Back to menu", ImVec2(220, 0)))
+            if (gameState == GameState::Lost && UiTheme::button("Back to menu", false, ImVec2(-1, 38)))
                 returnToMenu();
-            ImGui::End();
+            UiPanels::endCenteredCard();
         }
         if (gameState == GameState::FreeExplore && blackHole.isSunSwallowed() &&
             !freeExploreSwallowedDismissed) {
-            ImGui::SetNextWindowPos(
-                ImVec2(static_cast<float>(windowWidth) * 0.5f,
-                       static_cast<float>(windowHeight) * 0.5f),
-                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-            ImGui::Begin("Free Explore Ending", nullptr,
-                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+            UiPanels::beginCenteredCard("Free Explore Ending", static_cast<float>(windowWidth),
+                                        static_cast<float>(windowHeight), 460, 230);
+            ImGui::TextColored(UiTheme::Accent, "SIMULATION ENDED");
+            if (UiTheme::TitleFont) ImGui::PushFont(UiTheme::TitleFont);
             ImGui::TextUnformatted("The Sun was swallowed");
-            if (ImGui::Button("Restart", ImVec2(220, 0)))
+            if (UiTheme::TitleFont) ImGui::PopFont();
+            if (UiTheme::button("Restart", true, ImVec2(-1, 40)))
                 startFreeExplore();
-            if (ImGui::Button("Keep watching", ImVec2(220, 0)))
+            if (UiTheme::button("Keep watching", false, ImVec2(-1, 38)))
                 freeExploreSwallowedDismissed = true;
-            ImGui::End();
+            UiPanels::endCenteredCard();
         }
         if (quizOpen) {
-            ImGui::SetNextWindowSize(ImVec2(520, 300), ImGuiCond_Always);
-            ImGui::Begin("Planet Quiz", &quizOpen, ImGuiWindowFlags_NoResize);
+            UiPanels::beginCenteredCard("Planet Quiz", static_cast<float>(windowWidth),
+                                        static_cast<float>(windowHeight), 560, 390, &quizOpen);
             if (quizFinished || quizQuestionIndex >= quizRound.size()) {
                 ImGui::Text("Quiz complete");
                 ImGui::Text("Final score: %d / %d", quizScore, static_cast<int>(quizRound.size()));
-                if (ImGui::Button("Close")) {
+                if (UiTheme::button("Close", true, ImVec2(-1, 38))) {
                     quizOpen = false;
                     paused = quizWasPaused;
                 }
@@ -1724,10 +1826,10 @@ void Application::run() {
                 ImGui::TextWrapped("%s", q.question.c_str());
                 if (!quizAnswered) {
                     for (int i = 0; i < 4; ++i)
-                        if (ImGui::Button(q.choices[static_cast<std::size_t>(i)].c_str())) {
+                        if (UiTheme::button(quizDisplayChoices[static_cast<std::size_t>(i)].c_str(), false, ImVec2(-1, 36))) {
                             quizChoice = i;
                             quizAnswered = true;
-                            const bool correct = q.choices[static_cast<std::size_t>(i)] == q.answer;
+                            const bool correct = quizDisplayChoices[static_cast<std::size_t>(i)] == q.answer;
                             if (correct)
                                 ++quizScore;
                             recordQuizAnswer(correct);
@@ -1735,34 +1837,39 @@ void Application::run() {
                 } else {
                     ImGui::TextColored(
                         quizChoice >= 0 &&
-                                q.choices[static_cast<std::size_t>(quizChoice)] == q.answer
+                                quizDisplayChoices[static_cast<std::size_t>(quizChoice)] == q.answer
                             ? ImVec4(0.3f, 1, 0.4f, 1)
                             : ImVec4(1, 0.35f, 0.3f, 1),
                         "%s",
                         quizChoice >= 0 &&
-                                q.choices[static_cast<std::size_t>(quizChoice)] == q.answer
+                                quizDisplayChoices[static_cast<std::size_t>(quizChoice)] == q.answer
                             ? "Correct!"
                             : "Not quite.");
                     if (quizChoice < 0 ||
-                        q.choices[static_cast<std::size_t>(quizChoice)] != q.answer)
+                        quizDisplayChoices[static_cast<std::size_t>(quizChoice)] != q.answer)
                         ImGui::Text("Correct answer: %s", q.answer.c_str());
-                    if (ImGui::Button(quizQuestionIndex + 1 == quizRound.size() ? "Show result"
-                                                                                : "Next")) {
+                    if (UiTheme::button(quizQuestionIndex + 1 == quizRound.size() ? "Show result"
+                                                                                  : "Next", true, ImVec2(-1, 38))) {
                         ++quizQuestionIndex;
                         quizAnswered = false;
-                        if (quizQuestionIndex >= quizRound.size())
+                        if (quizQuestionIndex >= quizRound.size()) {
                             quizFinished = true;
+                        } else {
+                            quizChoice = -1;
+                            shuffleDisplayedChoices();
+                        }
                     }
                 }
-                if (ImGui::Button("Close")) {
+                if (UiTheme::button("Close", false, ImVec2(-1, 36))) {
                     quizOpen = false;
                     paused = quizWasPaused;
                 }
             }
-            ImGui::End();
+            UiPanels::endCenteredCard();
             if (!quizOpen)
                 paused = quizWasPaused;
         }
+        ImGui::PopFont();
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         if (screenshotRequested) {

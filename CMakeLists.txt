@@ -32,7 +32,7 @@ add_library(imgui STATIC ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui
 target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(imgui PUBLIC glfw)
 add_executable(solar_system
-  src/main.cpp src/Application.cpp src/BlackHole.cpp src/Shader.cpp src/Mesh.cpp src/Texture.cpp src/PostProcess.cpp)
+  src/main.cpp src/Application.cpp src/UiTheme.cpp src/UiPanels.cpp src/QuizRandomizer.cpp src/BlackHole.cpp src/Shader.cpp src/Mesh.cpp src/Texture.cpp src/PostProcess.cpp)
 target_include_directories(solar_system PRIVATE src ${stb_SOURCE_DIR})
 target_link_libraries(solar_system PRIVATE glfw glm::glm glad imgui)
 if(MSVC)

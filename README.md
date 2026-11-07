@@ -16,7 +16,7 @@ The same configure/build commands work with GCC or Clang. In Visual Studio use *
 
 ## Libraries
 
-GLFW (Zlib/libpng), GLAD (MIT), GLM (Happy Bunny and MIT), Dear ImGui (MIT), stb (public domain / MIT). Dependencies are fetched at configure time. stb_image loads the optional sky texture.
+GLFW (Zlib/libpng), GLAD (MIT), GLM (Happy Bunny and MIT), Dear ImGui (MIT), stb (public domain / MIT). Dependencies are fetched at configure time. stb_image loads the optional sky texture. The interface can load Inter and Space Grotesk fonts from `assets/fonts/`; both font families use the SIL Open Font License. Font files are optional and are not included; see `assets/fonts/README.txt`.
 
 ## Controls
 
@@ -29,6 +29,7 @@ GLFW (Zlib/libpng), GLAD (MIT), GLM (Happy Bunny and MIT), Dear ImGui (MIT), stb
 - The F1 help also notes that optional planet maps have procedural fallbacks and Earth has a rendered Moon.
 - Left click or select a name in Mission Control: select a planet or the Sun and fly to it. Right mouse drag rotates the camera; the wheel zooms.
 - In free-fly, `W` / `A` / `S` / `D` move and `Shift` moves faster.
+- The right-side dark space interface has clickable state chips that stay synchronized with `G`, `L`, `I`, `M`, and `Q`; expand **Controls** at the bottom for the complete key list. `F1` or `H` opens the same help in a centered card.
 - The start screen offers **Start Mission** and **Free Explore**. Mission visits and correct quiz answers earn points while the threat advances; quiz questions pause simulation time.
 
 The window can be resized and safely handles a minimized framebuffer. Team name is a placeholder.
@@ -52,6 +53,10 @@ The window can be resized and safely handles a minimized framebuffer. Team name 
 **Done (black-hole gameplay):** The 90-second-at-1x threat can be returned along the same eased progress curve. Mission loss offers Restart and Back to menu; Free Explore offers a swallowed-Sun ending with Restart or Keep watching, and R restarts after swallowing. Asteroids and meteors follow the black hole without accumulated drift; asteroid-versus-planet repulsion remains active.
 
 **Done (Milky Way view):** Free Explore has a Solar System / Milky Way view toggle and Y shortcut while the black hole is Idle. Smooth simulation-time transitions render bounded, glowing camera-facing trails and a subtle starfield parallax; physics and picking remain Sun-centred. Trails pause with Space, scale with simulation speed, and clear on restart. This view is a stylized visualization.
+
+**Done (interface):** the ImGui panel uses a near-black blue palette, warm yellow accent, a SOLAR header, simulation hero, status chips, clickable world cards, aligned information rows, and matching centered mission, ending, quiz, and help cards. `UiTheme::kUiTextScale` defaults to 1.2 and scales the font atlas pixel sizes and layout measurements with GLFW content scale; `FontGlobalScale` is not stacked on top. Layout uses logical window dimensions with a 26%-width panel capped at 460 px and 40% of the window. The requested Inter and Space Grotesk font files load at DPI-scaled sizes when present; missing files use ImGui's default font and print a warning. The status strip remains pinned above the scrollable world/info content.
+
+**Done (quiz randomization):** each world uses a Fisher–Yates question bag so questions are used once before the bag refills, with the previous question kept off the next bag's first slot. Answer options reshuffle by their answer text identity for each display. `kQuizFixedSeed` is in `src/QuizRandomizer.h`: zero uses `std::random_device` with a clock fallback; a nonzero value gives a repeatable seed sequence. Mission and quiz starts print the seed.
 
 **Partial:** Visual checks for resizing/DPI, Earth, quiz/Q, lensing (B/L), and numeric performance across instanced/non-instanced consuming modes remain to be done. The old timer threat remains as a marked fallback; scene scales and black-hole effects are illustrative rather than physically simulated.
 

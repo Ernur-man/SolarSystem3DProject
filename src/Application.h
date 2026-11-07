@@ -5,12 +5,15 @@
 #include "BlackHole.h"
 #include "ThreatInterface.h"
 #include "PostProcess.h"
+#include "QuizRandomizer.h"
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <cstddef>
 #include <string>
 #include <vector>
 #include <array>
+#include <random>
+#include <cstdint>
 
 struct GalaxyTrailPoint { glm::vec3 position; };
 struct GalaxyTrail { std::vector<GalaxyTrailPoint> points; std::size_t head = 0, count = 0; };
@@ -101,6 +104,11 @@ private:
     Body sunBody;
     std::vector<QuizQuestion> questions;
     std::vector<std::size_t> quizRound;
+    std::array<QuizRandomizer::QuestionBag, 9> quizQuestionBags;
+    std::array<std::string, 4> quizDisplayChoices{};
+    std::mt19937 quizRandom{};
+    std::uint32_t quizSeedSequence = 0;
+    std::uint32_t activeQuizSeed = 0;
     BlackHole blackHole;
     FallbackThreat fallbackThreat; // Legacy alternative; the real black hole is selected by default.
 
@@ -174,6 +182,8 @@ private:
     glm::vec3 bodyPosition(int index, float time) const;
     bool loadData();
     void beginQuiz();
+    void initializeQuizBags();
+    void shuffleDisplayedChoices();
     void startMission(bool summonHole = true);
     void startFreeExplore();
     void returnToMenu();
