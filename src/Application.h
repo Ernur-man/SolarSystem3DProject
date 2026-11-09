@@ -5,12 +5,19 @@
 #include "BlackHole.h"
 #include "ThreatInterface.h"
 #include "PostProcess.h"
+#include "QuizRandomizer.h"
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <cstddef>
 #include <string>
 #include <vector>
 #include <array>
+#include <random>
+#include <cstdint>
+
+struct GalaxyTrailPoint { glm::vec3 position; };
+struct GalaxyTrail { std::vector<GalaxyTrailPoint> points; std::size_t head = 0, count = 0; };
+struct TrailVertex { glm::vec3 position; glm::vec4 color; float edge; };
 
 enum class GameState { StartScreen, FreeExplore, Mission, Won, Lost };
 
@@ -50,6 +57,15 @@ struct Asteroid {
     glm::vec3 color{0.5f};
 };
 
+struct CityMarker {
+    std::string name;
+    std::string country;
+    float latitude = 0.0f;
+    float longitude = 0.0f;
+    double population = 0.0;
+};
+struct CityPinVertex { glm::vec3 position; float opacity; };
+
 class Application {
 public:
     bool init();
@@ -66,7 +82,9 @@ private:
     Shader skyShader;
     Shader orbitShader;
     Shader meteorShader;
+    Shader trailShader;
     Shader asteroidShader;
+    Shader cityPinShader;
     Mesh sphere;
     Mesh lowDetailSphere;
     std::vector<Mesh> orbitLines;
@@ -74,9 +92,13 @@ private:
     Mesh earthMoonOrbitLine;
     GLuint meteorQuadVao = 0;
     GLuint meteorQuadVbo = 0;
+    GLuint trailVao = 0, trailVbo = 0;
+    std::array<GalaxyTrail, 10> galaxyTrails;
+    std::vector<TrailVertex> trailVertices;
     std::vector<Meteor> meteors;
     Mesh asteroidMesh;
     GLuint asteroidInstanceVbo = 0;
+    GLuint cityPinVao = 0, cityPinVbo = 0;
     std::vector<Asteroid> asteroids;
     GLsizei asteroidDrawCalls = 0;
     Mesh saturnRing;
@@ -87,12 +109,19 @@ private:
     Texture earthNormalTexture;
     Texture earthSpecularTexture;
     Texture saturnRingTexture;
+    GLuint generatedEarthMap = 0;
+    std::vector<CityMarker> cities;
     std::array<Texture, 8> worldTextures;
     PostProcess postProcess;
     std::vector<Body> bodies;
     Body sunBody;
     std::vector<QuizQuestion> questions;
     std::vector<std::size_t> quizRound;
+    std::array<QuizRandomizer::QuestionBag, 9> quizQuestionBags;
+    std::array<std::string, 4> quizDisplayChoices{};
+    std::mt19937 quizRandom{};
+    std::uint32_t quizSeedSequence = 0;
+    std::uint32_t activeQuizSeed = 0;
     BlackHole blackHole;
     FallbackThreat fallbackThreat; // Legacy alternative; the real black hole is selected by default.
 
@@ -110,6 +139,18 @@ private:
     float lightAngle = 0.0f;
     int screenshotIndex = 1;
     float simTime = 0;
+    float galaxyTime = 0.0f, galaxyBlend = 0.0f, galaxyTransition = 0.0f;
+    float trailSampleClock = 0.0f;
+    bool galaxyViewTarget = false;
+    bool lastYDown = false;
+    bool cityMarkersEnabled = true;
+    bool mapPanelOpen = false;
+    bool lastNDown = false, lastPDown = false;
+    float mapZoom = 1.0f;
+    glm::vec2 mapPan{0.0f, 0.0f};
+    float pickedLatitude = 0.0f, pickedLongitude = 0.0f;
+    bool hasEarthCoordinate = false;
+    bool earthMapTargetActive = false;
     float yaw = 0;
     float pitch = 0.25f;
     float distance = 22;
@@ -153,6 +194,7 @@ private:
     glm::vec3 startCamera{0, 0, 22};
     glm::vec3 startTarget{0};
     glm::vec3 flyCameraOffset{0, 3, 7};
+    glm::vec3 earthMapTargetLocal{0.0f, 0.0f, 1.0f};
     glm::vec3 freeForward{0, 0, -1};
 
     glm::vec3 cameraPosition() const;
@@ -162,6 +204,8 @@ private:
     glm::vec3 bodyPosition(int index, float time) const;
     bool loadData();
     void beginQuiz();
+    void initializeQuizBags();
+    void shuffleDisplayedChoices();
     void startMission(bool summonHole = true);
     void startFreeExplore();
     void returnToMenu();
@@ -176,8 +220,17 @@ private:
     void drawEarthMoon(const glm::mat4 &view, const glm::mat4 &projection);
     void drawMeteors(const glm::mat4 &view, const glm::mat4 &projection);
     void drawAsteroids(const glm::mat4 &view, const glm::mat4 &projection);
+    void drawCityPins(const glm::mat4 &view, const glm::mat4 &projection);
+    void drawCityLabels(const glm::mat4 &view, const glm::mat4 &projection);
+    void loadCities();
+    void createEarthMapFallback();
+    glm::mat4 earthModelMatrix() const;
     void applyQualitySettings();
     ThreatInterface &activeThreat();
     BodyEffect bodyEffect(int index) const;
     glm::vec3 earthMoonPosition() const;
+    void updateGalaxy(float simulationDelta);
+    void drawGalaxyTrails(const glm::mat4 &view, const glm::mat4 &projection);
+    glm::vec3 galaxyDisplacement() const;
+    void resetGalaxyView();
 };
