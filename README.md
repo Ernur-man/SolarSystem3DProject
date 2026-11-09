@@ -12,11 +12,15 @@ cmake --build build --config Release
 .\build\Release\solar_system.exe
 ```
 
-The same configure/build commands work with GCC or Clang. In Visual Studio use **File → Open → Folder** and select this directory, or open the generated solution in `build`.
+The same configure/build commands work with GCC or Clang. CMake downloads pinned dependency sources at configure time; runtime requires no network access. In Visual Studio use **File → Open → Folder** and select this directory, or open the generated solution in `build`.
 
 ## Libraries
 
 GLFW (Zlib/libpng), GLAD (MIT), GLM (Happy Bunny and MIT), Dear ImGui (MIT), stb (public domain / MIT). Dependencies are fetched at configure time. stb_image loads the optional sky texture. The interface can load Inter and Space Grotesk fonts from `assets/fonts/`; both font families use the SIL Open Font License. Font files are optional and are not included; see `assets/fonts/README.txt`.
+
+## Sound
+
+World ambience is synthesized in C++ at startup, so the game needs no audio assets. The high-level miniaudio engine uses the bundled single header at `third_party/miniaudio/miniaudio.h`, version `0.11.22` (public domain / MIT-0); it is not downloaded by CMake. If the header is absent, CMake builds a silent audio stub and the HUD shows `Sound: OFF (not built)`. If the output device cannot start, the game continues with sound disabled. The initial master volume is 35%; adjust it in the Mission Control panel or mute with `K`. Selecting a world plays a quiet synthesized blip. The overview uses a very quiet synthesized deep-space loop. Optional world recordings can override the generated loops; names, supported formats, and licence guidance are in `assets/audio/README.txt`.
 
 ## Controls
 
@@ -26,6 +30,8 @@ GLFW (Zlib/libpng), GLAD (MIT), GLM (Happy Bunny and MIT), Dear ImGui (MIT), stb
 - `B`: summon or return the black hole; `R`: return it in Free Explore, restart Free Explore after the Sun is swallowed, or restart an active/finished mission; `F`: toggle free-fly; `[` / `]`: rotate the Sun light direction.
 - `Esc`: clear selection and smoothly return to the overview; `F12`: save a PNG in `screenshots/`.
 - `F1` or `H`: show or hide the complete controls overlay.
+- `K`: smoothly mute or unmute synthesized ambience. Mission Control has a master-volume slider.
+- `Y`: toggle the Solar System / Milky Way view in Free Explore while the black hole is idle.
 - `N`: toggle Earth city pins and labels. Select Earth and press `P` to open or close its offline map panel.
 - The F1 help also notes that optional planet maps have procedural fallbacks and Earth has a rendered Moon.
 - Earth map mode includes 50 offline city markers, lat/lon picking, and a pannable, zoomable equirectangular map. Without `assets/textures/earth_day.jpg`, the map is generated at startup from the Earth procedural shader recipe; it is not live map imagery.
@@ -55,6 +61,10 @@ The window can be resized and safely handles a minimized framebuffer. Team name 
 **Done (black-hole gameplay):** The 90-second-at-1x threat can be returned along the same eased progress curve. Mission loss offers Restart and Back to menu; Free Explore offers a swallowed-Sun ending with Restart or Keep watching, and R restarts after swallowing. Asteroids and meteors follow the black hole without accumulated drift; asteroid-versus-planet repulsion remains active.
 
 **Done (Milky Way view):** Free Explore has a Solar System / Milky Way view toggle and Y shortcut while the black hole is Idle. Smooth simulation-time transitions render bounded, glowing camera-facing trails and a subtle starfield parallax; physics and picking remain Sun-centred. Trails pause with Space, scale with simulation speed, and clear on restart. This view is a stylized visualization.
+
+**Added (Milky Way camera):** The Milky Way overview applies `kMilkyWayCameraYawDeg = -90.0f` to the normal overview azimuth. Its two-second smoothstep transition uses the same direction blend as the mode and returns to Solar System orientation when the mode is turned off. Restart resets the angle to the normal overview. With the camera formula below, negative yaw rotates the horizontal camera offset toward the camera's prior left side.
+
+**Added (sound):** Synthesized 9.5-second stereo loops supply distinct world tones and filtered noise, plus deep-space ambience. Gains follow focus/proximity and body opacity, and the HUD provides volume and mute controls. See the Gameplay Notes equations for the synthesis and distance fade.
 
 **Done (interface):** the ImGui panel uses a near-black blue palette, warm yellow accent, a SOLAR header, simulation hero, status chips, clickable world cards, aligned information rows, and matching centered mission, ending, quiz, and help cards. `UiTheme::kUiTextScale` defaults to 1.2 and scales the font atlas pixel sizes and layout measurements with GLFW content scale; `FontGlobalScale` is not stacked on top. Layout uses logical window dimensions with a 26%-width panel capped at 460 px and 40% of the window. The requested Inter and Space Grotesk font files load at DPI-scaled sizes when present; missing files use ImGui's default font and print a warning. The status strip remains pinned above the scrollable world/info content.
 
