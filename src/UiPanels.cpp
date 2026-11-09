@@ -27,6 +27,7 @@ void controlsList() {
     ImGui::TextWrapped("G: toggle bloom state | L: toggle lensing state");
     ImGui::TextWrapped("I: toggle asteroid instancing | Q: toggle high / low quality");
     ImGui::TextWrapped("M: toggle meteors");
+    ImGui::TextWrapped("N: toggle Earth city markers and labels | P: toggle the Earth Map panel when Earth is selected");
     ImGui::TextWrapped("Y: toggle Milky Way view in Free Explore (black hole Idle)");
     ImGui::TextWrapped("Planet maps are optional; procedural surfaces and Earth's Moon work without files");
     ImGui::TextWrapped("B: summon / return black hole | R: return or restart after swallow in Free Explore");

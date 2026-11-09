@@ -57,6 +57,15 @@ struct Asteroid {
     glm::vec3 color{0.5f};
 };
 
+struct CityMarker {
+    std::string name;
+    std::string country;
+    float latitude = 0.0f;
+    float longitude = 0.0f;
+    double population = 0.0;
+};
+struct CityPinVertex { glm::vec3 position; float opacity; };
+
 class Application {
 public:
     bool init();
@@ -75,6 +84,7 @@ private:
     Shader meteorShader;
     Shader trailShader;
     Shader asteroidShader;
+    Shader cityPinShader;
     Mesh sphere;
     Mesh lowDetailSphere;
     std::vector<Mesh> orbitLines;
@@ -88,6 +98,7 @@ private:
     std::vector<Meteor> meteors;
     Mesh asteroidMesh;
     GLuint asteroidInstanceVbo = 0;
+    GLuint cityPinVao = 0, cityPinVbo = 0;
     std::vector<Asteroid> asteroids;
     GLsizei asteroidDrawCalls = 0;
     Mesh saturnRing;
@@ -98,6 +109,8 @@ private:
     Texture earthNormalTexture;
     Texture earthSpecularTexture;
     Texture saturnRingTexture;
+    GLuint generatedEarthMap = 0;
+    std::vector<CityMarker> cities;
     std::array<Texture, 8> worldTextures;
     PostProcess postProcess;
     std::vector<Body> bodies;
@@ -130,6 +143,14 @@ private:
     float trailSampleClock = 0.0f;
     bool galaxyViewTarget = false;
     bool lastYDown = false;
+    bool cityMarkersEnabled = true;
+    bool mapPanelOpen = false;
+    bool lastNDown = false, lastPDown = false;
+    float mapZoom = 1.0f;
+    glm::vec2 mapPan{0.0f, 0.0f};
+    float pickedLatitude = 0.0f, pickedLongitude = 0.0f;
+    bool hasEarthCoordinate = false;
+    bool earthMapTargetActive = false;
     float yaw = 0;
     float pitch = 0.25f;
     float distance = 22;
@@ -173,6 +194,7 @@ private:
     glm::vec3 startCamera{0, 0, 22};
     glm::vec3 startTarget{0};
     glm::vec3 flyCameraOffset{0, 3, 7};
+    glm::vec3 earthMapTargetLocal{0.0f, 0.0f, 1.0f};
     glm::vec3 freeForward{0, 0, -1};
 
     glm::vec3 cameraPosition() const;
@@ -198,6 +220,11 @@ private:
     void drawEarthMoon(const glm::mat4 &view, const glm::mat4 &projection);
     void drawMeteors(const glm::mat4 &view, const glm::mat4 &projection);
     void drawAsteroids(const glm::mat4 &view, const glm::mat4 &projection);
+    void drawCityPins(const glm::mat4 &view, const glm::mat4 &projection);
+    void drawCityLabels(const glm::mat4 &view, const glm::mat4 &projection);
+    void loadCities();
+    void createEarthMapFallback();
+    glm::mat4 earthModelMatrix() const;
     void applyQualitySettings();
     ThreatInterface &activeThreat();
     BodyEffect bodyEffect(int index) const;

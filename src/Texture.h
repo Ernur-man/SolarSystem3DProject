@@ -11,6 +11,7 @@ public:
     bool isLoaded() const {
         return textureId != 0;
     }
+    GLuint id() const { return textureId; }
     void bind(GLuint unit = 0) const;
     void release();
 

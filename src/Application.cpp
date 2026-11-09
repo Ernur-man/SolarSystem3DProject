@@ -25,10 +25,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 #include <iterator>
 #include <random>
 #include <regex>
 #include <sstream>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace {
 constexpr float ORBIT_BASE_SECONDS = 120.0f;
@@ -116,6 +118,61 @@ std::string readText(const char *path) {
     contents << file.rdbuf();
     return contents.str();
 }
+
+float hashEarth(glm::vec3 p) {
+    return std::sin(glm::dot(p, glm::vec3(127.1f, 311.7f, 74.7f))) * 43758.5453f -
+           std::floor(std::sin(glm::dot(p, glm::vec3(127.1f, 311.7f, 74.7f))) * 43758.5453f);
+}
+
+float earthNoise(glm::vec3 p) {
+    const glm::vec3 cell(std::floor(p.x), std::floor(p.y), std::floor(p.z));
+    glm::vec3 f(p.x - cell.x, p.y - cell.y, p.z - cell.z);
+    f = f * f * (glm::vec3(3.0f) - 2.0f * f);
+    const float a = glm::mix(hashEarth(cell), hashEarth(cell + glm::vec3(1, 0, 0)), f.x);
+    const float b = glm::mix(hashEarth(cell + glm::vec3(0, 1, 0)), hashEarth(cell + glm::vec3(1, 1, 0)), f.x);
+    const float c = glm::mix(hashEarth(cell + glm::vec3(0, 0, 1)), hashEarth(cell + glm::vec3(1, 0, 1)), f.x);
+    const float d = glm::mix(hashEarth(cell + glm::vec3(0, 1, 1)), hashEarth(cell + glm::vec3(1, 1, 1)), f.x);
+    return glm::mix(glm::mix(a, b, f.y), glm::mix(c, d, f.y), f.z);
+}
+
+float earthFbm(glm::vec3 p) {
+    float value = 0.0f, amplitude = 0.5f;
+    for (int i = 0; i < 4; ++i) {
+        value += amplitude * earthNoise(p);
+        p *= 2.03f;
+        amplitude *= 0.5f;
+    }
+    return value;
+}
+
+glm::u8vec3 earthMapColor(float u, float v) {
+    const float latitude = (0.5f - v) * 3.14159265f;
+    const float longitude = u * 6.2831853f;
+    const glm::vec3 p(std::cos(latitude) * std::cos(longitude), std::sin(latitude),
+                      std::cos(latitude) * std::sin(longitude));
+    const float continents = earthFbm(p * 2.7f + glm::vec3(11, 2, 7));
+    const float land = glm::smoothstep(0.475f, 0.535f, continents);
+    const float terrain = earthFbm(p * 15.0f + glm::vec3(3, 8, 1));
+    const float height = glm::smoothstep(0.52f, 0.78f, continents);
+    const float coast = 1.0f - glm::smoothstep(0.0f, 0.10f, 0.50f - continents);
+    glm::vec3 color = glm::mix(glm::vec3(0.008f, 0.035f, 0.17f),
+                               glm::vec3(0.12f, 0.72f, 0.82f), coast * (1.0f - land));
+    const glm::vec3 low = glm::mix(glm::vec3(0.10f, 0.34f, 0.12f), glm::vec3(0.47f, 0.43f, 0.21f),
+                                   glm::smoothstep(0.42f, 0.68f, terrain));
+    const glm::vec3 high = glm::mix(glm::vec3(0.37f, 0.25f, 0.12f), glm::vec3(0.68f, 0.62f, 0.48f),
+                                    glm::smoothstep(0.48f, 0.72f, terrain));
+    glm::vec3 landColor = glm::mix(low, high, glm::smoothstep(0.18f, 0.68f, height));
+    const float dryEquator = (1.0f - glm::smoothstep(0.17f, 0.38f, std::abs(p.y))) *
+                             glm::smoothstep(0.52f, 0.64f, terrain);
+    landColor = glm::mix(landColor, glm::vec3(0.72f, 0.58f, 0.30f),
+                         dryEquator * (1.0f - height));
+    landColor = glm::mix(landColor, glm::vec3(0.92f, 0.94f, 0.98f),
+                         glm::smoothstep(0.72f, 0.86f, height));
+    landColor = glm::mix(landColor, glm::vec3(0.92f, 0.94f, 0.98f), glm::smoothstep(0.82f, 0.94f, std::abs(p.y)));
+    color = glm::mix(color, landColor, land);
+    color = glm::clamp(color, glm::vec3(0), glm::vec3(1));
+    return glm::u8vec3(color * 255.0f + glm::vec3(0.5f));
+}
 }
 
 Application::~Application() {
@@ -134,6 +191,10 @@ Application::~Application() {
         glDeleteProgram(asteroidShader.id);
     if (meteorShader.id != 0)
         glDeleteProgram(meteorShader.id);
+    if (cityPinVbo != 0) glDeleteBuffers(1, &cityPinVbo);
+    if (cityPinVao != 0) glDeleteVertexArrays(1, &cityPinVao);
+    if (cityPinShader.id != 0) glDeleteProgram(cityPinShader.id);
+    if (generatedEarthMap != 0) glDeleteTextures(1, &generatedEarthMap);
     skyTexture.release();
     earthDayTexture.release();
     earthNightTexture.release();
@@ -148,6 +209,141 @@ Application::~Application() {
         glfwDestroyWindow(window);
     }
     glfwTerminate();
+}
+
+void Application::loadCities() {
+    const std::string source = readText("assets/cities.json");
+    const std::regex objectPattern("\\{[^{}]*\\}");
+    for (std::sregex_iterator it(source.begin(), source.end(), objectPattern), end; it != end; ++it) {
+        const std::string object = it->str();
+        CityMarker city;
+        city.name = field(object, "name");
+        city.country = field(object, "country");
+        city.latitude = static_cast<float>(numberField(object, "lat"));
+        city.longitude = static_cast<float>(numberField(object, "lon"));
+        city.population = numberField(object, "population");
+        if (!city.name.empty() && std::abs(city.latitude) <= 90.0f &&
+            std::abs(city.longitude) <= 180.0f)
+            cities.push_back(std::move(city));
+    }
+    std::stable_sort(cities.begin(), cities.end(), [](const CityMarker &a, const CityMarker &b) {
+        return a.population > b.population;
+    });
+    if (cities.size() < 40 || cities.size() > 60)
+        std::cerr << "Warning: expected 40-60 Earth city markers, loaded " << cities.size() << '\n';
+    std::cout << "Loaded " << cities.size() << " offline Earth city markers. Astana map check: "
+              << "u=" << 71.45f / 360.0f << ", v=" << (90.0f - 51.18f) / 180.0f << '\n';
+}
+
+void Application::createEarthMapFallback() {
+    constexpr int mapWidth = 1024, mapHeight = 512;
+    std::vector<glm::u8vec3> pixels(static_cast<std::size_t>(mapWidth * mapHeight));
+    for (int y = 0; y < mapHeight; ++y)
+        for (int x = 0; x < mapWidth; ++x)
+            pixels[static_cast<std::size_t>(y * mapWidth + x)] =
+                earthMapColor(static_cast<float>(x) / mapWidth,
+                              1.0f - static_cast<float>(y) / mapHeight);
+    glGenTextures(1, &generatedEarthMap);
+    glBindTexture(GL_TEXTURE_2D, generatedEarthMap);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8, mapWidth, mapHeight, 0, GL_RGB, GL_UNSIGNED_BYTE,
+                 pixels.data());
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+glm::mat4 Application::earthModelMatrix() const {
+    const BodyEffect effect = bodyEffect(2);
+    const float spin = simTime * 6.2831853f * ROTATION_SCALE / bodies[2].rotationPeriodDays;
+    const glm::vec3 scale(bodies[2].radius * effect.perpendicularScale,
+                          bodies[2].radius * effect.perpendicularScale,
+                          bodies[2].radius * effect.axialScale);
+    return glm::translate(glm::mat4(1.0f), effect.position) * glm::mat4(effect.basis) *
+           glm::rotate(glm::mat4(1.0f), spin, glm::vec3(0, 1, 0)) *
+           glm::scale(glm::mat4(1.0f), scale);
+}
+
+void Application::drawCityPins(const glm::mat4 &view, const glm::mat4 &projection) {
+    if (!cityMarkersEnabled || selected != 2 || cities.empty() || bodyEffect(2).swallowed)
+        return;
+    const glm::mat4 model = earthModelMatrix();
+    const glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(model)));
+    const glm::vec3 cameraDirection = glm::normalize(currentCamera - bodyEffect(2).position);
+    const float opacity = bodyEffect(2).opacity;
+    std::vector<CityPinVertex> pins;
+    pins.reserve(cities.size());
+    for (const CityMarker &city : cities) {
+        const float lat = glm::radians(city.latitude), lon = glm::radians(city.longitude);
+        const glm::vec3 local(std::cos(lat) * std::cos(lon), std::sin(lat), std::cos(lat) * std::sin(lon));
+        const glm::vec3 world = glm::vec3(model * glm::vec4(local * 1.025f, 1.0f));
+        const glm::vec3 normal = glm::normalize(normalMatrix * local);
+        if (glm::dot(normal, glm::normalize(currentCamera - world)) <= 0.0f || opacity <= 0.01f)
+            continue;
+        pins.push_back({world, opacity});
+    }
+    if (pins.empty()) return;
+    GLint oldProgram = 0, oldVao = 0;
+    GLint oldBlendSrcRgb = GL_ONE, oldBlendDstRgb = GL_ZERO;
+    GLint oldBlendSrcAlpha = GL_ONE, oldBlendDstAlpha = GL_ZERO;
+    GLboolean oldDepthWrite = GL_TRUE, oldBlend = glIsEnabled(GL_BLEND);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &oldProgram);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &oldVao);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &oldBlendSrcRgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &oldBlendDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &oldBlendSrcAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &oldBlendDstAlpha);
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &oldDepthWrite);
+    glEnable(GL_PROGRAM_POINT_SIZE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glDepthMask(GL_FALSE);
+    cityPinShader.use();
+    cityPinShader.set("view", view);
+    cityPinShader.set("projection", projection);
+    glBindVertexArray(cityPinVao);
+    glBindBuffer(GL_ARRAY_BUFFER, cityPinVbo);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(pins.size() * sizeof(CityPinVertex)),
+                 pins.data(), GL_DYNAMIC_DRAW);
+    glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(pins.size()));
+    glBindVertexArray(static_cast<GLuint>(oldVao));
+    glUseProgram(static_cast<GLuint>(oldProgram));
+    glDepthMask(oldDepthWrite);
+    if (!oldBlend) glDisable(GL_BLEND);
+    glBlendFuncSeparate(static_cast<GLenum>(oldBlendSrcRgb), static_cast<GLenum>(oldBlendDstRgb),
+                        static_cast<GLenum>(oldBlendSrcAlpha), static_cast<GLenum>(oldBlendDstAlpha));
+}
+
+void Application::drawCityLabels(const glm::mat4 &view, const glm::mat4 &projection) {
+    if (!cityMarkersEnabled || selected != 2 || distance > 5.0f || cities.empty()) return;
+    const glm::mat4 model = earthModelMatrix();
+    const glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(model)));
+    const glm::vec3 cameraDirection = glm::normalize(currentCamera - bodyEffect(2).position);
+    const int maxLabels = highQuality ? 8 : 4;
+    int shown = 0;
+    ImDrawList *drawList = ImGui::GetBackgroundDrawList();
+    for (const CityMarker &city : cities) {
+        const float lat = glm::radians(city.latitude), lon = glm::radians(city.longitude);
+        const glm::vec3 local(std::cos(lat) * std::cos(lon), std::sin(lat), std::cos(lat) * std::sin(lon));
+        const glm::vec3 world = glm::vec3(model * glm::vec4(local * 1.025f, 1.0f));
+        const glm::vec3 normal = glm::normalize(normalMatrix * local);
+        if (glm::dot(normal, glm::normalize(currentCamera - world)) <= 0.15f ||
+            glm::dot(glm::normalize(world - bodyEffect(2).position), cameraDirection) < 0.25f)
+            continue;
+        const glm::vec4 clip = projection * view * glm::vec4(world, 1.0f);
+        if (clip.w <= 0.0f) continue;
+        const float nx = clip.x / clip.w, ny = clip.y / clip.w;
+        if (std::abs(nx) > 1.0f || std::abs(ny) > 1.0f) continue;
+        const float fade = std::clamp((5.0f - distance) / 2.5f, 0.0f, 1.0f);
+        const ImVec2 point((nx * 0.5f + 0.5f) * windowWidth, (0.5f - ny * 0.5f) * windowHeight);
+        drawList->AddText(point, IM_COL32(255, 220, 128, static_cast<int>(230.0f * fade)),
+                          city.name.c_str());
+        if (++shown >= maxLabels) break;
+    }
 }
 
 bool Application::loadData() {
@@ -290,7 +486,8 @@ bool Application::init() {
         !orbitShader.load("shaders/orbit.vert", "shaders/orbit.frag") ||
         !trailShader.load("shaders/trail.vert", "shaders/trail.frag") ||
         !asteroidShader.load("shaders/asteroid.vert", "shaders/asteroid.frag") ||
-        !meteorShader.load("shaders/meteor.vert", "shaders/meteor.frag"))
+        !meteorShader.load("shaders/meteor.vert", "shaders/meteor.frag") ||
+        !cityPinShader.load("shaders/city_pin.vert", "shaders/city_pin.frag"))
         return false;
     glGenVertexArrays(1, &trailVao);
     glGenBuffers(1, &trailVbo);
@@ -307,6 +504,16 @@ bool Application::init() {
                           reinterpret_cast<void *>(offsetof(TrailVertex, edge)));
     glBindVertexArray(0);
     for (GalaxyTrail &trail : galaxyTrails) trail.points.resize(kTrailCapacity);
+    glGenVertexArrays(1, &cityPinVao);
+    glGenBuffers(1, &cityPinVbo);
+    glBindVertexArray(cityPinVao);
+    glBindBuffer(GL_ARRAY_BUFFER, cityPinVbo);
+    glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(CityPinVertex), nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(CityPinVertex), reinterpret_cast<void *>(offsetof(CityPinVertex, opacity)));
+    glBindVertexArray(0);
     skyTexture.load("assets/textures/stars_milky_way.jpg", true, "procedural starfield");
     earthDayTexture.load("assets/textures/earth_day.jpg", true, "procedural Earth surface");
     earthNightTexture.load("assets/textures/earth_night.jpg", true, "procedural city lights");
@@ -321,6 +528,8 @@ bool Application::init() {
         "assets/textures/neptune.jpg", "assets/textures/moon.jpg"};
     for (std::size_t i = 0; i < worldTextures.size(); ++i)
         worldTextures[i].load(worldTexturePaths[i], true, "procedural surface");
+    loadCities();
+    if (!earthDayTexture.isLoaded()) createEarthMapFallback();
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
@@ -578,6 +787,7 @@ void Application::selectBody(int index) {
     if (index < 0 || index > 8)
         return;
     const bool fromOverview = selected < 0;
+    earthMapTargetActive = false;
     if (fromOverview)
         overviewDistance = distance;
     selected = index;
@@ -1262,6 +1472,27 @@ void Application::input(float deltaTime) {
     const bool h = glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS;
     const bool r = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
     const bool keyY = glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS;
+    const bool keyN = glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS;
+    const bool keyP = glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS;
+    if (keyN && !lastNDown) {
+        cityMarkersEnabled = !cityMarkersEnabled;
+        std::cout << "Earth city markers: " << (cityMarkersEnabled ? "ON" : "OFF") << '\n';
+    }
+    if (keyP && !lastPDown && selected == 2) {
+        mapPanelOpen = !mapPanelOpen;
+        if (mapPanelOpen && distance > 4.5f) {
+            distance = 4.5f;
+            flyCameraOffset = glm::vec3(distance * std::cos(pitch) * std::sin(yaw),
+                                        distance * std::sin(pitch),
+                                        distance * std::cos(pitch) * std::cos(yaw));
+            startCamera = currentCamera;
+            startTarget = cameraTarget;
+            flyElapsed = 0.0f;
+            flying = true;
+        }
+    }
+    lastNDown = keyN;
+    lastPDown = keyP;
     if (keyY && !lastYDown && gameState == GameState::FreeExplore && blackHole.isIdle()) {
         galaxyViewTarget = !galaxyViewTarget;
         if (galaxyViewTarget && galaxyTransition == 0.0f)
@@ -1431,8 +1662,21 @@ void Application::input(float deltaTime) {
                 hit = i;
             }
         }
-        if (hit >= 0)
+        if (hit >= 0) {
             selectBody(hit);
+            if (hit == 2) {
+                const glm::vec3 worldHit = origin + ray * closest;
+                const glm::vec3 localHit(glm::inverse(earthModelMatrix()) * glm::vec4(worldHit, 1.0f));
+                const glm::vec3 unit = glm::normalize(localHit);
+                pickedLatitude = glm::degrees(std::asin(std::clamp(unit.y, -1.0f, 1.0f)));
+                pickedLongitude = glm::degrees(std::atan2(unit.z, unit.x));
+                hasEarthCoordinate = true;
+                std::cout << "Earth pick: Lat " << std::fixed << std::setprecision(2)
+                          << std::abs(pickedLatitude) << (pickedLatitude >= 0 ? " N" : " S")
+                          << ", Lon " << std::abs(pickedLongitude)
+                          << (pickedLongitude >= 0 ? " E" : " W") << std::defaultfloat << '\n';
+            }
+        }
     }
     lastLeftDown = left;
     mouseX = static_cast<float>(x);
@@ -1488,8 +1732,9 @@ void Application::run() {
             const float t = std::clamp(flyElapsed / 1.5f, 0.0f, 1.0f);
             const float eased =
                 t * t * (3.0f - 2.0f); // Smoothstep eases both ends of the camera path.
-            const glm::vec3 endTarget =
-                selected >= 0 ? bodyEffect(selected).position : glm::vec3(0);
+            const glm::vec3 endTarget = selected == 2 && earthMapTargetActive
+                ? glm::vec3(earthModelMatrix() * glm::vec4(earthMapTargetLocal, 1.0f))
+                : (selected >= 0 ? bodyEffect(selected).position : glm::vec3(0));
             const glm::vec3 endCamera = selected >= 0
                                             ? endTarget + flyCameraOffset * (1.0f + galaxyBlend * 1.35f)
                                             : endTarget + (cameraPosition() - cameraTarget);
@@ -1498,7 +1743,9 @@ void Application::run() {
             if (t >= 1.0f)
                 flying = false;
         } else if (selected >= 0 && !freeFly) {
-            const glm::vec3 target = bodyEffect(selected).position;
+            const glm::vec3 target = selected == 2 && earthMapTargetActive
+                ? glm::vec3(earthModelMatrix() * glm::vec4(earthMapTargetLocal, 1.0f))
+                : bodyEffect(selected).position;
             cameraTarget = target;
             currentCamera = target + flyCameraOffset * (1.0f + galaxyBlend * 1.35f);
         } else if (!freeFly) {
@@ -1568,6 +1815,7 @@ void Application::run() {
         drawSaturnRing(view, projection);
         drawAsteroids(view, projection);
         drawMeteors(view, projection);
+        drawCityPins(view, projection);
         drawGalaxyTrails(view, projection);
 
         postProcess.endScene();
@@ -1581,6 +1829,7 @@ void Application::run() {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         UiTheme::beginFrame();
+        drawCityLabels(view, projection);
         const float maxPanelWidth = std::min(460.0f, static_cast<float>(windowWidth) * 0.40f);
         const float requestedPanelWidth = static_cast<float>(windowWidth) * 0.26f;
         const float panelWidth = maxPanelWidth >= 300.0f
@@ -1625,6 +1874,8 @@ void Application::run() {
         drawStatusChip(instancing ? "Instancing ON" : "Instancing OFF", instancing, [&] { instancing = !instancing; });
         drawStatusChip(meteorsEnabled ? "Meteors ON" : "Meteors OFF", meteorsEnabled,
                        [&] { meteorsEnabled = !meteorsEnabled; });
+        drawStatusChip(cityMarkersEnabled ? "Cities ON (N)" : "Cities OFF (N)", cityMarkersEnabled,
+                       [&] { cityMarkersEnabled = !cityMarkersEnabled; });
         drawStatusChip(highQuality ? "Quality High" : "Quality Low", highQuality, [&] {
             highQuality = !highQuality;
             applyQualitySettings();
@@ -1724,6 +1975,75 @@ void Application::run() {
                 std::snprintf(value, sizeof(value), "%d", b.moons);
                 UiTheme::keyValue("Moons", value);
             }
+            if (b.name == "Earth" && hasEarthCoordinate) {
+                char coordinate[96];
+                std::snprintf(coordinate, sizeof(coordinate), "Lat %.2f %c, Lon %.2f %c",
+                              std::abs(pickedLatitude), pickedLatitude >= 0.0f ? 'N' : 'S',
+                              std::abs(pickedLongitude), pickedLongitude >= 0.0f ? 'E' : 'W');
+                UiTheme::keyValue("Coordinates", coordinate);
+            }
+            if (b.name == "Earth" && distance <= 5.0f) {
+                ImGui::SetNextItemOpen(mapPanelOpen, ImGuiCond_Always);
+                mapPanelOpen = ImGui::CollapsingHeader("Map");
+                if (mapPanelOpen) {
+                    const ImVec2 mapSize(std::max(180.0f, ImGui::GetContentRegionAvail().x), 132.0f);
+                    ImGui::InvisibleButton("Earth map viewport", mapSize);
+                    const ImVec2 topLeft = ImGui::GetItemRectMin();
+                    const ImVec2 bottomRight = ImGui::GetItemRectMax();
+                    const bool hovered = ImGui::IsItemHovered();
+                    if (hovered && ImGui::GetIO().MouseWheel != 0.0f)
+                        mapZoom = std::clamp(mapZoom * std::pow(1.18f, ImGui::GetIO().MouseWheel), 1.0f, 5.0f);
+                    if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                        const ImVec2 delta = ImGui::GetIO().MouseDelta;
+                        mapPan += glm::vec2(-delta.x / mapSize.x / mapZoom, -delta.y / mapSize.y / mapZoom);
+                        const float panLimit = 0.5f * (1.0f - 1.0f / mapZoom);
+                        mapPan = glm::clamp(mapPan, glm::vec2(-panLimit), glm::vec2(panLimit));
+                    }
+                    const float visible = 1.0f / mapZoom;
+                    const float u0 = 0.5f - visible * 0.5f + mapPan.x;
+                    const float v0 = 0.5f - visible * 0.5f + mapPan.y;
+                    const float u1 = u0 + visible, v1 = v0 + visible;
+                    const GLuint mapTexture = earthDayTexture.isLoaded() ? earthDayTexture.id() : generatedEarthMap;
+                    const ImTextureID mapId = (ImTextureID)(intptr_t)mapTexture;
+                    ImDrawList *mapDraw = ImGui::GetWindowDrawList();
+                    mapDraw->AddImage(mapId, topLeft, bottomRight, ImVec2(u0, 1.0f - v0), ImVec2(u1, 1.0f - v1));
+                    if (cityMarkersEnabled) {
+                        for (const CityMarker &city : cities) {
+                            float cityU = city.longitude / 360.0f;
+                            if (cityU < 0.0f) cityU += 1.0f;
+                            const float cityV = 0.5f - city.latitude / 180.0f;
+                            if (cityU < u0 || cityU > u1 || cityV < v0 || cityV > v1) continue;
+                            const ImVec2 point(topLeft.x + (cityU - u0) / visible * mapSize.x,
+                                               topLeft.y + (cityV - v0) / visible * mapSize.y);
+                            mapDraw->AddCircleFilled(point, 2.0f, IM_COL32(255, 220, 135, 235));
+                        }
+                    }
+                    const ImVec2 center((topLeft.x + bottomRight.x) * 0.5f, (topLeft.y + bottomRight.y) * 0.5f);
+                    mapDraw->AddCircle(center, 5.0f, IM_COL32(255, 215, 70, 255), 0, 2.0f);
+                    mapDraw->AddLine(ImVec2(center.x - 8, center.y), ImVec2(center.x + 8, center.y), IM_COL32(255, 215, 70, 210));
+                    mapDraw->AddLine(ImVec2(center.x, center.y - 8), ImVec2(center.x, center.y + 8), IM_COL32(255, 215, 70, 210));
+                    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                        const ImVec2 mouse = ImGui::GetIO().MousePos;
+                        const float mapU = u0 + (mouse.x - topLeft.x) / mapSize.x * visible;
+                        const float mapV = v0 + (mouse.y - topLeft.y) / mapSize.y * visible;
+                        pickedLatitude = 90.0f - mapV * 180.0f;
+                        pickedLongitude = mapU <= 0.5f ? mapU * 360.0f : (mapU - 1.0f) * 360.0f;
+                        const float lat = glm::radians(pickedLatitude), lon = glm::radians(pickedLongitude);
+                        earthMapTargetLocal = glm::vec3(std::cos(lat) * std::cos(lon), std::sin(lat), std::cos(lat) * std::sin(lon));
+                        earthMapTargetActive = true;
+                        hasEarthCoordinate = true;
+                        startCamera = currentCamera;
+                        startTarget = cameraTarget;
+                        flyElapsed = 0.0f;
+                        flying = true;
+                        std::cout << "Earth map target: Lat " << std::fixed << std::setprecision(2)
+                                  << std::abs(pickedLatitude) << (pickedLatitude >= 0 ? " N" : " S")
+                                  << ", Lon " << std::abs(pickedLongitude)
+                                  << (pickedLongitude >= 0 ? " E" : " W") << std::defaultfloat << '\n';
+                    }
+                    ImGui::Text("Wheel: zoom | Drag: pan | Click: fly to location");
+                }
+            }
             if (UiTheme::SmallFont) ImGui::PushFont(UiTheme::SmallFont);
             for (const std::string &fact : b.facts) {
                 ImGui::Bullet();
@@ -1751,6 +2071,9 @@ void Application::run() {
         ImGui::Separator();
         if (gameState == GameState::FreeExplore)
             ImGui::Text("Esc: back to overview");
+        if (selected == 2)
+            ImGui::TextWrapped("N: cities %s | P: map panel %s", cityMarkersEnabled ? "ON" : "OFF",
+                               mapPanelOpen ? "open" : "closed");
         ImGui::TextWrapped(
             "RMB drag: camera | Wheel: zoom | F: free-fly | WASD move | Shift faster");
         if (ImGui::CollapsingHeader("CONTROLS"))

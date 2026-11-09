@@ -93,6 +93,14 @@ The HUD displays the placeholder team name, project title, frame rate, simulatio
 
 The ImGui interface uses a small `UiTheme` module to keep its dark blue-black colors, muted secondary text, warm yellow accent, spacing, corner radii, and font setup together. `kUiTextScale = 1.2` multiplies each font's atlas pixel size by the GLFW content scale; it does not set `FontGlobalScale`, avoiding a second texture rescale. It requests Inter Regular for body text, Inter Bold for small caps, and Space Grotesk Bold for large headings. Missing or invalid optional TTF files warn and fall back to a scaled built-in ImGui font. `UiPanels` shares centered-card and control-list layouts so the collapsed panel controls and F1 help show the same keys.
 
+## Offline Earth map
+
+Earth picking transforms the ray-sphere hit by the inverse of Earth's current model matrix (spin, black-hole basis and scale), then computes `latitude = asin(local.y / r)` and `longitude = atan2(local.z, local.x)`. Latitude is shown north-positive and longitude east-positive in the console and selected-Earth card. The UV convention follows the sphere mesh and Earth vertex shader: `u = fract(longitude / 2π)` and top-origin map `v = 0.5 - latitude / π`. Astana's reference marker uses 51.18°N, 71.45°E and therefore u≈0.1985, v≈0.2157.
+
+City pins use `positionLocal = R * (cos(lat) cos(lon), sin(lat), cos(lat) sin(lon))`, then the same Earth model matrix used for the globe. Front-side filtering keeps far-side city pins and labels hidden; the pin points are depth-tested, additive and depth-write disabled. Labels are population-sorted, distance limited, and reduced in Low quality.
+
+When `earth_day.jpg` is absent, a 1024×512 equirectangular map is generated once at startup using the Earth shader's four-octave value-noise land/ocean field and palette. Map UVs use the same longitude seam and north-at-top convention as the shader; dragging pans, wheel zooms, and clicking sets a smoothly followed local surface target. **This is an offline map, not live tiles.**
+
 The right panel width is 26% of the logical window, clamped to 300–460 pixels and capped at 40% of the window; `kPanelOnRight` selects the dock side. The pinned status strip stays visible above the scrollable ImGui content while scene rendering and mouse-picking's existing `WantCaptureMouse` guard stay unchanged. Planet cards preserve the existing selection/fly-to call, and state chips update the same rendering flags as their keyboard shortcuts. This interface is a presentation-only change: it does not alter mission, quiz, physics, or black-hole rules.
 
 ## Quiz randomization

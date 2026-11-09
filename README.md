@@ -26,7 +26,9 @@ GLFW (Zlib/libpng), GLAD (MIT), GLM (Happy Bunny and MIT), Dear ImGui (MIT), stb
 - `B`: summon or return the black hole; `R`: return it in Free Explore, restart Free Explore after the Sun is swallowed, or restart an active/finished mission; `F`: toggle free-fly; `[` / `]`: rotate the Sun light direction.
 - `Esc`: clear selection and smoothly return to the overview; `F12`: save a PNG in `screenshots/`.
 - `F1` or `H`: show or hide the complete controls overlay.
+- `N`: toggle Earth city pins and labels. Select Earth and press `P` to open or close its offline map panel.
 - The F1 help also notes that optional planet maps have procedural fallbacks and Earth has a rendered Moon.
+- Earth map mode includes 50 offline city markers, lat/lon picking, and a pannable, zoomable equirectangular map. Without `assets/textures/earth_day.jpg`, the map is generated at startup from the Earth procedural shader recipe; it is not live map imagery.
 - Left click or select a name in Mission Control: select a planet or the Sun and fly to it. Right mouse drag rotates the camera; the wheel zooms.
 - In free-fly, `W` / `A` / `S` / `D` move and `Shift` moves faster.
 - The right-side dark space interface has clickable state chips that stay synchronized with `G`, `L`, `I`, `M`, and `Q`; expand **Controls** at the bottom for the complete key list. `F1` or `H` opens the same help in a centered card.
