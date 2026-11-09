@@ -42,6 +42,7 @@ constexpr float EARTH_MOON_RADIUS = 0.105f;
 constexpr float kRingSpinSpeed = 6.2831853f / 25.0f;
 // Galactic drift in scene units per simulated second at 1x.
 constexpr float kGalaxySpeed = 0.34f;
+constexpr float kMilkyWayCameraYawDeg = -90.0f; // Negative means left; tune this live.
 constexpr float kTrailSampleSeconds = 0.12f;
 constexpr std::size_t kTrailCapacity = 1200;
 constexpr bool kPanelOnRight = true;
@@ -449,6 +450,7 @@ bool Application::loadData() {
 bool Application::init() {
     if (!glfwInit())
         return false;
+    audio.initialize();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -651,10 +653,11 @@ void Application::applyQualitySettings() {
 }
 
 glm::vec3 Application::cameraPosition() const {
-    const float cameraDistance = distance + galaxyBlend * overviewDistance * 1.35f;
-    return cameraTarget + glm::vec3(cameraDistance * std::cos(pitch) * std::sin(yaw),
+    const float cameraDistance = distance;
+    const float cameraYaw = yaw + glm::radians(kMilkyWayCameraYawDeg) * galaxyBlend;
+    return cameraTarget + glm::vec3(cameraDistance * std::cos(pitch) * std::sin(cameraYaw),
                                     cameraDistance * std::sin(pitch),
-                                    cameraDistance * std::cos(pitch) * std::cos(yaw));
+                                    cameraDistance * std::cos(pitch) * std::cos(cameraYaw));
 }
 
 glm::vec3 Application::galaxyDisplacement() const {
@@ -669,14 +672,31 @@ void Application::resetGalaxyView() {
     for (GalaxyTrail &trail : galaxyTrails) { trail.head = 0; trail.count = 0; }
 }
 
-void Application::updateGalaxy(float simulationDelta) {
+void Application::setGalaxyViewTarget(bool enabled) {
+    if (enabled && !galaxyViewTarget) {
+        const glm::vec3 before = currentCamera;
+        const float horizontalRadius = distance * std::cos(pitch);
+        const glm::vec3 oldLeft(-horizontalRadius * std::cos(yaw), 0.0f,
+                                horizontalRadius * std::sin(yaw));
+        const glm::vec3 after = cameraTarget + glm::vec3(
+            oldLeft.x, distance * std::sin(pitch), oldLeft.z);
+        std::cout << "Milky Way camera transition: before (" << before.x << ", " << before.y
+                  << ", " << before.z << "), after target (" << after.x << ", " << after.y
+                  << ", " << after.z << "), previous left horizontal (" << oldLeft.x
+                  << ", 0, " << oldLeft.z << ")\n";
+        if (galaxyTransition == 0.0f)
+            for (GalaxyTrail &trail : galaxyTrails) { trail.head = 0; trail.count = 0; }
+    }
+    galaxyViewTarget = enabled;
+}
+
+void Application::updateGalaxy(float deltaTime, float simulationDelta) {
     const float oldBlend = galaxyBlend;
-    if (simulationDelta <= 0.0f) return;
     if (gameState == GameState::FreeExplore && galaxyViewTarget) galaxyTime += simulationDelta;
     const float direction = galaxyViewTarget ? 1.0f : -1.0f;
-    galaxyTransition = std::clamp(galaxyTransition + direction * simulationDelta / 2.0f, 0.0f, 1.0f);
+    galaxyTransition = std::clamp(galaxyTransition + direction * deltaTime / 2.0f, 0.0f, 1.0f);
     galaxyBlend = galaxyTransition * galaxyTransition * (3.0f - 2.0f * galaxyTransition);
-    if (galaxyViewTarget && gameState == GameState::FreeExplore && galaxyBlend > 0.0f) {
+    if (simulationDelta > 0.0f && galaxyViewTarget && gameState == GameState::FreeExplore && galaxyBlend > 0.0f) {
         const float interval = kTrailSampleSeconds;
         float timeToSample = interval - trailSampleClock;
         while (timeToSample <= simulationDelta) {
@@ -791,6 +811,7 @@ void Application::selectBody(int index) {
     if (fromOverview)
         overviewDistance = distance;
     selected = index;
+    audio.playBlip();
     recordVisit(index);
     startCamera = currentCamera;
     startTarget = cameraTarget;
@@ -1474,6 +1495,9 @@ void Application::input(float deltaTime) {
     const bool keyY = glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS;
     const bool keyN = glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS;
     const bool keyP = glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS;
+    const bool keyK = glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS;
+    if (keyK && !lastKDown) audio.toggleMute();
+    lastKDown = keyK;
     if (keyN && !lastNDown) {
         cityMarkersEnabled = !cityMarkersEnabled;
         std::cout << "Earth city markers: " << (cityMarkersEnabled ? "ON" : "OFF") << '\n';
@@ -1494,9 +1518,7 @@ void Application::input(float deltaTime) {
     lastNDown = keyN;
     lastPDown = keyP;
     if (keyY && !lastYDown && gameState == GameState::FreeExplore && blackHole.isIdle()) {
-        galaxyViewTarget = !galaxyViewTarget;
-        if (galaxyViewTarget && galaxyTransition == 0.0f)
-            for (GalaxyTrail &trail : galaxyTrails) { trail.head = 0; trail.count = 0; }
+        setGalaxyViewTarget(!galaxyViewTarget);
         std::cout << "View: " << (galaxyViewTarget ? "Milky Way" : "Solar System") << '\n';
     }
     lastYDown = keyY;
@@ -1526,7 +1548,7 @@ void Application::input(float deltaTime) {
         if (gameState == GameState::Mission || gameState == GameState::FreeExplore) {
             if (blackHole.isIdle()) {
                 if (galaxyViewTarget) {
-                    galaxyViewTarget = false;
+                    setGalaxyViewTarget(false);
                     std::cout << "View: Solar System (black hole active)\n";
                 }
                 freeExploreSwallowedDismissed = false;
@@ -1718,7 +1740,7 @@ void Application::run() {
             if (blackHole.isSunSwallowed())
                 paused = true;
         }
-        updateGalaxy(simulationDelta);
+        updateGalaxy(dt, simulationDelta);
         if (selected >= 0 && bodyEffect(selected).swallowed) {
             selected = -1;
             distance = overviewDistance;
@@ -1727,6 +1749,9 @@ void Application::run() {
             startCamera = currentCamera;
             startTarget = cameraTarget;
         }
+        const glm::vec3 modeCameraOffset = glm::vec3(
+            glm::rotate(glm::mat4(1.0f), glm::radians(kMilkyWayCameraYawDeg) * galaxyBlend,
+                        glm::vec3(0, 1, 0)) * glm::vec4(flyCameraOffset, 0.0f));
         if (flying) {
             flyElapsed += dt;
             const float t = std::clamp(flyElapsed / 1.5f, 0.0f, 1.0f);
@@ -1736,7 +1761,7 @@ void Application::run() {
                 ? glm::vec3(earthModelMatrix() * glm::vec4(earthMapTargetLocal, 1.0f))
                 : (selected >= 0 ? bodyEffect(selected).position : glm::vec3(0));
             const glm::vec3 endCamera = selected >= 0
-                                            ? endTarget + flyCameraOffset * (1.0f + galaxyBlend * 1.35f)
+                                            ? endTarget + modeCameraOffset
                                             : endTarget + (cameraPosition() - cameraTarget);
             cameraTarget = glm::mix(startTarget, endTarget, eased);
             currentCamera = glm::mix(startCamera, endCamera, eased);
@@ -1747,10 +1772,38 @@ void Application::run() {
                 ? glm::vec3(earthModelMatrix() * glm::vec4(earthMapTargetLocal, 1.0f))
                 : bodyEffect(selected).position;
             cameraTarget = target;
-            currentCamera = target + flyCameraOffset * (1.0f + galaxyBlend * 1.35f);
+            currentCamera = target + modeCameraOffset;
         } else if (!freeFly) {
             currentCamera = cameraPosition();
         }
+        int soundWorld = -1;
+        float soundDistance = 1000.0f;
+        float soundFade = 1.0f;
+        if (selected >= 0) {
+            soundWorld = selected == 8 ? 9 : selected < 3 ? selected : selected + 1;
+            const BodyEffect effect = bodyEffect(selected);
+            soundDistance = glm::length(currentCamera - effect.position);
+            soundFade = effect.swallowed ? 0.0f : effect.opacity;
+        } else if (gameplayActive) {
+            for (int i = 0; i <= 8; ++i) {
+                const BodyEffect effect = bodyEffect(i);
+                const float candidate = glm::length(currentCamera - effect.position);
+                if (!effect.swallowed && candidate < soundDistance) {
+                    soundDistance = candidate;
+                    soundWorld = i == 8 ? 9 : i < 3 ? i : i + 1;
+                    soundFade = effect.opacity;
+                }
+            }
+            const BodyEffect moonEffect = blackHole.affectBody(earthMoonPosition(), false);
+            const float moonDistance = glm::length(currentCamera - moonEffect.position);
+            if (!moonEffect.swallowed && moonDistance < soundDistance) {
+                soundWorld = 3;
+                soundDistance = moonDistance;
+                soundFade = moonEffect.opacity;
+            }
+            if (soundDistance > 24.0f) soundWorld = -1;
+        }
+        audio.update(soundWorld, soundDistance, soundFade, dt);
         if (!postProcess.beginScene()) {
             glfwPollEvents();
             continue;
@@ -1843,6 +1896,9 @@ void Application::run() {
         ImGui::TextWrapped("Event Horizon: Solar System Explorer");
         ImGui::Text("FPS %.0f | Speed %dx | %s", ImGui::GetIO().Framerate, speed,
                     paused ? "Paused" : "Running");
+        if (!audio.available()) ImGui::TextDisabled("%s", audio.status());
+        else if (audio.muted()) ImGui::TextDisabled("Sound: MUTED (K)");
+        else ImGui::Text("Sound: ON %.0f%% (K)", audio.master() * 100.0f);
         const char *missionStatus = "Start screen";
         if (gameState == GameState::FreeExplore)
             missionStatus = "Free explore";
@@ -1870,6 +1926,7 @@ void Application::run() {
             if (UiTheme::chip(label, active, ImVec2(0, 30))) action();
         };
         drawStatusChip(bloom ? "Bloom ON" : "Bloom OFF", bloom, [&] { bloom = !bloom; });
+        drawStatusChip(audio.muted() ? "Sound MUTED (K)" : "Sound ON (K)", !audio.muted(), [&] { audio.toggleMute(); });
         drawStatusChip(lensing ? "Lensing ON" : "Lensing OFF", lensing, [&] { lensing = !lensing; });
         drawStatusChip(instancing ? "Instancing ON" : "Instancing OFF", instancing, [&] { instancing = !instancing; });
         drawStatusChip(meteorsEnabled ? "Meteors ON" : "Meteors OFF", meteorsEnabled,
@@ -1886,7 +1943,7 @@ void Application::run() {
         drawStatusChip(holeChip, !blackHole.isIdle(), [&] {
           if (gameplayActive) {
             if (blackHole.isIdle()) {
-                if (galaxyViewTarget) galaxyViewTarget = false;
+                if (galaxyViewTarget) setGalaxyViewTarget(false);
                 blackHole.summon();
             } else {
                 blackHole.returnBack();
@@ -1894,6 +1951,11 @@ void Application::run() {
           }
         });
         ImGui::Separator();
+        if (audio.available()) {
+            float masterVolume = audio.master();
+            if (ImGui::SliderFloat("Master volume", &masterVolume, 0.0f, 1.0f, "%.0f%%"))
+                audio.setMaster(masterVolume);
+        }
         ImGui::BeginChild("panel_content", ImVec2(0, 0), false);
         ImGui::TextWrapped("Bloom %s | Instancing %s | Meteors: %s | Lensing: %s",
                     bloom ? "ON" : "OFF", instancing ? "ON" : "OFF",
@@ -1909,14 +1971,12 @@ void Application::run() {
         if (UiTheme::SmallFont) ImGui::PushFont(UiTheme::SmallFont);
         ImGui::BeginDisabled(!canChangeView);
         if (UiTheme::chip("Solar System", !galaxyViewTarget, ImVec2(segmentWidth / UiTheme::UiScale, 30))) {
-            galaxyViewTarget = false;
+            setGalaxyViewTarget(false);
             std::cout << "View: Solar System\n";
         }
         ImGui::SameLine();
         if (UiTheme::chip("Milky Way", galaxyViewTarget, ImVec2(segmentWidth / UiTheme::UiScale, 30))) {
-            if (!galaxyViewTarget && galaxyTransition == 0.0f)
-                for (GalaxyTrail &trail : galaxyTrails) { trail.head = 0; trail.count = 0; }
-            galaxyViewTarget = true;
+            setGalaxyViewTarget(true);
             std::cout << "View: Milky Way\n";
         }
         ImGui::EndDisabled();

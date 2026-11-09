@@ -6,6 +6,7 @@
 #include "ThreatInterface.h"
 #include "PostProcess.h"
 #include "QuizRandomizer.h"
+#include "Audio.h"
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <cstddef>
@@ -123,6 +124,7 @@ private:
     std::uint32_t quizSeedSequence = 0;
     std::uint32_t activeQuizSeed = 0;
     BlackHole blackHole;
+    Audio audio;
     FallbackThreat fallbackThreat; // Legacy alternative; the real black hole is selected by default.
 
     int width = 1280;
@@ -181,6 +183,7 @@ private:
     bool lastBDown = false;
     bool lastF1Down = false;
     bool lastHDown = false;
+    bool lastKDown = false;
     bool lastRDown = false;
     bool lastF12Down = false;
     bool screenshotRequested = false;
@@ -229,8 +232,9 @@ private:
     ThreatInterface &activeThreat();
     BodyEffect bodyEffect(int index) const;
     glm::vec3 earthMoonPosition() const;
-    void updateGalaxy(float simulationDelta);
+    void updateGalaxy(float deltaTime, float simulationDelta);
     void drawGalaxyTrails(const glm::mat4 &view, const glm::mat4 &projection);
     glm::vec3 galaxyDisplacement() const;
     void resetGalaxyView();
+    void setGalaxyViewTarget(bool enabled);
 };

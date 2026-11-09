@@ -23,6 +23,7 @@ void endCenteredCard() {
 void controlsList() {
     ImGui::TextWrapped("F1 or H: toggle this help overlay");
     ImGui::TextWrapped("Space: pause simulation");
+    ImGui::TextWrapped("K: mute or unmute synthesized world ambience");
     ImGui::TextWrapped("1 / 2 / 3: simulation speed 1x / 5x / 10x");
     ImGui::TextWrapped("G: toggle bloom state | L: toggle lensing state");
     ImGui::TextWrapped("I: toggle asteroid instancing | Q: toggle high / low quality");

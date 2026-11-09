@@ -1,5 +1,65 @@
 # Gameplay and UI Equations
 
+## Synthesized world audio
+
+Each world gets a 9.5-second stereo loop generated from a ten-second source at 44.1 kHz. The basic
+tone is a small sum of sine partials, with world-specific fundamentals and
+weights:
+
+```text
+s(t) = sum(h[k] * sin(2*pi*f[k]*t))
+```
+
+A slow LFO shapes pulse or tremolo. Filtered wind/ocean textures use white
+noise and a one-pole low-pass, with a moving coefficient `a`:
+
+```text
+y[n] = y[n-1] + a * (x[n] - y[n-1])
+```
+
+The last 0.5 seconds are mixed into the first 0.5 seconds with a linear equal
+fade, then the loop begins at the first retained frame. This crossfade softens
+the noise and modulation seam. Camera distance uses a smoothstep fade:
+
+```text
+u = clamp((cameraDistance - dNear) / (dFar - dNear), 0, 1)
+distanceGain = 1 - u*u*(3 - 2*u)
+worldGain = baseGain * distanceGain * bodyOpacity
+```
+
+The master volume and per-world gains move toward their targets over roughly
+one second. The audio callback uses miniaudio's sound-volume API; it does not
+read application state or call OpenGL. `K` toggles mute and the Mission Control
+slider changes master volume. Missing optional recordings use the synthesized
+loop. Runtime recording files must have a compatible licence and report
+attribution.
+
+## Milky Way overview yaw
+
+The normal orbit camera uses azimuth `yaw` and pitch `pitch`:
+
+```text
+offset = (d*cos(pitch)*sin(yaw), d*sin(pitch), d*cos(pitch)*cos(yaw))
+milkyWayOffset = (d*cos(pitch)*sin(yaw + kMilkyWayCameraYawDeg),
+                  d*sin(pitch),
+                  d*cos(pitch)*cos(yaw + kMilkyWayCameraYawDeg))
+```
+
+With the camera looking toward the target, its horizontal left direction is
+`(-cos(yaw), 0, sin(yaw))`. Therefore `kMilkyWayCameraYawDeg = -90.0f`
+rotates the camera's horizontal offset onto that left direction while keeping
+target, pitch, and distance. The existing two-second smoothstep blend applies
+the yaw on entry and removes it on return.
+
+## Plain-language explanation
+
+Each planet's sound is built from quiet tones and filtered generated noise, so
+the project ships without audio files. A short crossfade closes each loop;
+miniaudio plays it while the selected or nearby body is audible, and the
+volume follows distance, mute, and the black-hole fade. In Milky Way mode the
+camera keeps looking at the same target from the same height and distance, but
+slides around to the left over two seconds. Turning the mode off eases it back.
+
 ## Planet position
 
 The rendered orbit is circular, with the real orbital period compressed for readable motion:
