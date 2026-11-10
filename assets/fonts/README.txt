@@ -1,12 +1,17 @@
-Optional interface font files expected by UiTheme:
+Optional static TrueType fonts are loaded by case-insensitive filename search.
+Place any supplied font binaries and their original SIL Open Font License and
+upstream attribution files in this directory. Variable TTF files are not
+supported by Dear ImGui's TrueType loader; the application warns and uses its
+size-matched built-in font if no matching static font is available.
 
-  Inter-Regular.ttf
-  Inter-Bold.ttf
-  SpaceGrotesk-Bold.ttf
+Interface font (Inter):
+  Inter-Regular.ttf (required face; body/interface text)
+  Inter-Medium.ttf (optional; compact labels)
+  Inter-SemiBold.ttf (optional; titles and splash)
 
-Place the files in this directory. The application loads them through Dear ImGui's
-built-in TrueType loader and falls back to the default ImGui font if any file is
-missing or invalid. Inter and Space Grotesk are distributed under the SIL Open
-Font License (OFL); retain the matching OFL license text and upstream attribution
-alongside each font when adding the font binaries. Font binaries are not included
-in this repository.
+Data font (JetBrains Mono):
+  JetBrainsMono-Regular.ttf (required face; measurements and readouts)
+  JetBrainsMono-Medium.ttf (optional; emphasized data values)
+
+The filename matching is case-insensitive and also accepts names containing
+spaces, underscores, or hyphens. Use static, non-variable TTF files.

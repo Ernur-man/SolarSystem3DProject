@@ -18,6 +18,8 @@
 #endif
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <cfloat>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -30,7 +32,6 @@
 #include <random>
 #include <regex>
 #include <sstream>
-#include <glm/gtc/type_ptr.hpp>
 
 namespace {
 constexpr float ORBIT_BASE_SECONDS = 120.0f;
@@ -46,24 +47,28 @@ constexpr float kMilkyWayCameraYawDeg = -90.0f; // Negative means left; tune thi
 constexpr float kTrailSampleSeconds = 0.12f;
 constexpr std::size_t kTrailCapacity = 1200;
 constexpr bool kPanelOnRight = true;
+constexpr float kPanelWidthRatio = 0.288f;
+constexpr float kPanelMaxWidth = 380.0f;
+constexpr float kPanelMaxWindowFraction = 0.40f;
+constexpr float kPanelMinWidth = 300.0f;
+constexpr float kLensingDemoHoldSeconds = 7.0f;
 constexpr std::size_t ASTEROID_COUNT_HIGH = 4000;
 constexpr std::size_t ASTEROID_COUNT_LOW = 1800;
 // Three-radius clearances cross in this stylized system (8.0 > 6.95); use 1.5R margins.
 constexpr float ASTEROID_BELT_INNER_RADIUS = 7.1f + 0.30f * 1.5f;
 constexpr float ASTEROID_BELT_OUTER_RADIUS = 9.5f - 0.85f * 1.5f;
 constexpr float ASTEROID_VERTICAL_SPREAD = 0.20f;
+
+float panelWidthForWindow(int logicalWindowWidth) {
+    const float windowWidth = std::max(0.0f, static_cast<float>(logicalWindowWidth));
+    const float maximum = std::min(kPanelMaxWidth, windowWidth * kPanelMaxWindowFraction);
+    return std::min(maximum, std::max(kPanelMinWidth, windowWidth * kPanelWidthRatio));
+}
+
 float scrollDelta = 0.0f;
 void scrollCallback(GLFWwindow *, double, double y) {
     scrollDelta += static_cast<float>(y);
 }
-
-#ifndef NDEBUG
-void APIENTRY debugMessageCallback(GLenum, GLenum type, GLuint id, GLenum severity, GLsizei,
-                                   const GLchar *message, const void *) {
-    std::cerr << "OpenGL debug message (type " << type << ", severity " << severity << ", id " << id
-              << "): " << (message ? message : "(no message)") << '\n';
-}
-#endif
 
 std::string field(const std::string &object, const char *key) {
     const std::regex pattern(std::string("\\\"") + key + "\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"");
@@ -341,7 +346,9 @@ void Application::drawCityLabels(const glm::mat4 &view, const glm::mat4 &project
         if (std::abs(nx) > 1.0f || std::abs(ny) > 1.0f) continue;
         const float fade = std::clamp((5.0f - distance) / 2.5f, 0.0f, 1.0f);
         const ImVec2 point((nx * 0.5f + 0.5f) * windowWidth, (0.5f - ny * 0.5f) * windowHeight);
-        drawList->AddText(point, IM_COL32(255, 220, 128, static_cast<int>(230.0f * fade)),
+        const ImU32 labelColor = ImGui::ColorConvertFloat4ToU32(ImVec4(
+            UiTheme::Accent.x, UiTheme::Accent.y, UiTheme::Accent.z, 0.90f * fade));
+        drawList->AddText(UiTheme::LabelFont, UiTheme::LabelFont->FontSize, point, labelColor,
                           city.name.c_str());
         if (++shown >= maxLabels) break;
     }
@@ -447,33 +454,24 @@ bool Application::loadData() {
     return true;
 }
 
-bool Application::init() {
+bool Application::init(bool introEnabled) {
     if (!glfwInit())
         return false;
     audio.initialize();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     window =
         glfwCreateWindow(width, height, "Event Horizon: Solar System Explorer", nullptr, nullptr);
     if (!window)
         return false;
+    intro.start(introEnabled);
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     glfwSetScrollCallback(window, scrollCallback);
     if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
         return false;
-#ifndef NDEBUG
-    if ((GLAD_GL_VERSION_4_3 || glfwExtensionSupported("GL_KHR_debug")) &&
-        glDebugMessageCallback != nullptr) {
-        glEnable(GL_DEBUG_OUTPUT);
-        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-        glDebugMessageCallback(debugMessageCallback, nullptr);
-        std::cout << "OpenGL debug output callback enabled.\n";
-    } else {
-        std::cerr << "OpenGL debug output is unavailable on this context.\n";
-    }
-#endif
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     sphere.makeSphere(32, 48);
@@ -811,6 +809,7 @@ void Application::selectBody(int index) {
     if (fromOverview)
         overviewDistance = distance;
     selected = index;
+    factsExpanded = false;
     audio.playBlip();
     recordVisit(index);
     startCamera = currentCamera;
@@ -861,6 +860,10 @@ void Application::shuffleDisplayedChoices() {
 }
 
 void Application::startMission(bool summonHole) {
+    lensingDemoPending = false;
+    lensingDemoActive = false;
+    lensingDemoReturning = false;
+    lensingDemoElapsed = 0.0f;
     resetGalaxyView();
     gameState = GameState::Mission;
     missionScore = 0;
@@ -1462,9 +1465,58 @@ void Application::drawSky(const glm::mat4 &view, const glm::mat4 &projection) {
 }
 
 void Application::input(float deltaTime) {
+    if (intro.active()) {
+        bool skip = false;
+        for (int button = GLFW_MOUSE_BUTTON_1; button <= GLFW_MOUSE_BUTTON_LAST; ++button)
+            skip = skip || glfwGetMouseButton(window, button) == GLFW_PRESS;
+        for (int key = 0; !skip && key <= GLFW_KEY_LAST; ++key)
+            skip = glfwGetKey(window, key) == GLFW_PRESS;
+        intro.update(deltaTime, skip);
+        lastSpaceDown = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+        lastFDown = glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS;
+        lastGDown = glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS;
+        lastLDown = glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS;
+        lastIDown = glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS;
+        lastMDown = glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS;
+        lastQDown = glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS;
+        lastBDown = glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS;
+        lastF1Down = glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS;
+        lastHDown = glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS;
+        lastKDown = glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS;
+        lastRDown = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
+        lastEscapeDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+        lastYDown = glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS;
+        lastNDown = glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS;
+        lastPDown = glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS;
+        lastF12Down = glfwGetKey(window, GLFW_KEY_F12) == GLFW_PRESS;
+        lastEscapeDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+        lastLeftDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        return;
+    }
+    if (lensingDemoPending && gameState == GameState::StartScreen) {
+        lensingDemoPending = false;
+        lensingDemoActive = true;
+        lensingDemoReturning = false;
+        lensingDemoElapsed = 0.0f;
+        blackHole.summon();
+    }
+    if (lensingDemoActive && gameState == GameState::StartScreen && !lensingDemoReturning) {
+        bool skipDemo = false;
+        for (int button = GLFW_MOUSE_BUTTON_1; button <= GLFW_MOUSE_BUTTON_LAST; ++button)
+            skipDemo = skipDemo || glfwGetMouseButton(window, button) == GLFW_PRESS;
+        for (int key = 0; !skipDemo && key <= GLFW_KEY_LAST; ++key)
+            skipDemo = glfwGetKey(window, key) == GLFW_PRESS;
+        if (skipDemo) {
+            blackHole.reset();
+            lensingDemoActive = false;
+            lensingDemoReturning = false;
+            lensingDemoElapsed = 0.0f;
+        }
+    }
     const bool escape = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
     if (escape && !lastEscapeDown) {
         selected = -1;
+        factsExpanded = false;
         distance = overviewDistance;
         flying = true;
         flyElapsed = 0;
@@ -1473,10 +1525,9 @@ void Application::input(float deltaTime) {
     }
     lastEscapeDown = escape;
     const bool space = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
-    static bool spaceWasDown = false;
-    if (space && !spaceWasDown)
+    if (space && !lastSpaceDown)
         paused = !paused;
-    spaceWasDown = space;
+    lastSpaceDown = space;
     if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS)
         speed = 1;
     if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS)
@@ -1597,9 +1648,15 @@ void Application::input(float deltaTime) {
         freeForward = glm::normalize(cameraTarget - currentCamera);
     }
     lastFDown = f;
-    const bool overUi = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
+    bool overUi = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
     double x = 0, y = 0;
     glfwGetCursorPos(window, &x, &y);
+    const float panelWidth = panelWidthForWindow(windowWidth);
+    const float panelLeft = kPanelOnRight ? static_cast<float>(windowWidth) - panelWidth : 0.0f;
+    overUi = overUi || (x >= panelLeft && x <= panelLeft + panelWidth && y >= 0.0 &&
+                        y < static_cast<double>(windowHeight));
+    overUi = overUi || help || quizOpen || (gameState == GameState::FreeExplore && blackHole.isSunSwallowed() &&
+                                !freeExploreSwallowedDismissed);
     const bool right = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
     const float dx = static_cast<float>(x) - mouseX, dy = static_cast<float>(y) - mouseY;
     if (!overUi && right) {
@@ -1739,6 +1796,20 @@ void Application::run() {
             blackHole.update(threatDeltaTime);
             if (blackHole.isSunSwallowed())
                 paused = true;
+        } else if (gameState == GameState::StartScreen && lensingDemoActive) {
+            blackHole.update(dt);
+            if (!lensingDemoReturning) {
+                lensingDemoElapsed += dt;
+                if (lensingDemoElapsed >= kLensingDemoHoldSeconds) {
+                    blackHole.returnBack();
+                    lensingDemoReturning = true;
+                }
+            }
+            if (lensingDemoReturning && blackHole.isIdle()) {
+                lensingDemoActive = false;
+                lensingDemoReturning = false;
+                lensingDemoElapsed = 0.0f;
+            }
         }
         updateGalaxy(dt, simulationDelta);
         if (selected >= 0 && bodyEffect(selected).swallowed) {
@@ -1878,173 +1949,175 @@ void Application::run() {
                                     view, projection, lensing);
         postProcess.composite(sceneTextureForComposite, bloom, highQuality ? 8 : 4);
 
+        UiTheme::updateDpi(window);
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         UiTheme::beginFrame();
+        if (intro.active()) {
+            intro.draw(static_cast<float>(windowWidth), static_cast<float>(windowHeight),
+                       UiTheme::DpiScale);
+        } else {
+        ImDrawList *hud = ImGui::GetForegroundDrawList();
+        ImFont *readoutFont = UiTheme::SmallDataFont ? UiTheme::SmallDataFont : ImGui::GetFont();
+        const float readoutSize = readoutFont->FontSize;
+        const ImU32 readoutColor = ImGui::ColorConvertFloat4ToU32(UiTheme::Secondary);
+        const float hudX = 16.0f * UiTheme::UiScale;
+        const float hudY = 14.0f * UiTheme::UiScale;
+        hud->AddText(readoutFont, readoutSize, ImVec2(hudX, hudY), readoutColor, "SOLAR SYSTEM 3D");
+        char clockText[80];
+        std::snprintf(clockText, sizeof(clockText), "SIMULATION  T+ %.3f DAYS",
+                      simTime / 86400.0f);
+        hud->AddText(readoutFont, readoutSize, ImVec2(hudX, hudY + readoutSize + 4.0f * UiTheme::UiScale),
+                     readoutColor, clockText);
+        if (lensingDemoActive) {
+            const ImU32 demoColor = ImGui::ColorConvertFloat4ToU32(UiTheme::Accent);
+            hud->AddText(readoutFont, readoutSize,
+                         ImVec2(hudX, hudY + 2.0f * (readoutSize + 4.0f * UiTheme::UiScale)),
+                         demoColor, "LENSING DEMO  |  ANY KEY TO SKIP");
+        }
+        if (windowWidth >= 1100) {
+            char cameraText[128], performanceText[80];
+            std::snprintf(cameraText, sizeof(cameraText), "CAM  AZ %5.1f°  EL %4.1f°  DIST %4.1f",
+                          yaw * 57.2957795f, pitch * 57.2957795f, distance);
+            std::snprintf(performanceText, sizeof(performanceText), "FPS %3.0f  Q %s",
+                          ImGui::GetIO().Framerate, highQuality ? "HIGH" : "LOW");
+            const float bottomY = static_cast<float>(windowHeight) - 2.0f * readoutSize - 22.0f * UiTheme::UiScale;
+            hud->AddText(readoutFont, readoutSize, ImVec2(hudX, bottomY), readoutColor, cameraText);
+            hud->AddText(readoutFont, readoutSize, ImVec2(hudX, bottomY + readoutSize + 4.0f * UiTheme::UiScale),
+                         readoutColor, performanceText);
+        }
         drawCityLabels(view, projection);
-        const float maxPanelWidth = std::min(460.0f, static_cast<float>(windowWidth) * 0.40f);
-        const float requestedPanelWidth = static_cast<float>(windowWidth) * 0.26f;
-        const float panelWidth = maxPanelWidth >= 300.0f
-                                     ? std::clamp(requestedPanelWidth, 300.0f, maxPanelWidth)
-                                     : maxPanelWidth;
+        drawCityLabels(view, projection);
+        const float panelWidth = panelWidthForWindow(windowWidth);
         ImGui::SetNextWindowPos(ImVec2(kPanelOnRight ? static_cast<float>(windowWidth) - panelWidth : 0.0f, 0), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(panelWidth, static_cast<float>(windowHeight)), ImGuiCond_Always);
-        ImGui::Begin("Mission Control", nullptr,
-                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
-        ImGui::Text("Team: Your Team");
-        ImGui::TextWrapped("Event Horizon: Solar System Explorer");
-        ImGui::Text("FPS %.0f | Speed %dx | %s", ImGui::GetIO().Framerate, speed,
-                    paused ? "Paused" : "Running");
-        if (!audio.available()) ImGui::TextDisabled("%s", audio.status());
-        else if (audio.muted()) ImGui::TextDisabled("Sound: MUTED (K)");
-        else ImGui::Text("Sound: ON %.0f%% (K)", audio.master() * 100.0f);
-        const char *missionStatus = "Start screen";
-        if (gameState == GameState::FreeExplore)
-            missionStatus = "Free explore";
-        else if (gameState == GameState::Mission)
-            missionStatus = "Mission active";
-        else if (gameState == GameState::Won)
-            missionStatus = "Mission won";
-        else if (gameState == GameState::Lost)
-            missionStatus = "Sun swallowed";
-        ImGui::TextWrapped("Status: %s | Score: %d / %d", missionStatus, missionScore,
-                    MISSION_TARGET_SCORE);
-        ImGui::SeparatorText("SYSTEM STATUS");
-        const float chipAvail = ImGui::GetContentRegionAvail().x;
-        float chipRowWidth = 0.0f;
-        auto drawStatusChip = [&](const char *label, bool active, auto action) {
-            const float itemWidth = ImGui::CalcTextSize(label).x +
-                                    ImGui::GetStyle().FramePadding.x * 2.0f +
-                                    ImGui::GetStyle().ItemSpacing.x;
-            if (chipRowWidth > 0.0f && chipRowWidth + itemWidth <= chipAvail) {
-                ImGui::SameLine();
-                chipRowWidth += itemWidth;
-            } else {
-                chipRowWidth = itemWidth;
-            }
-            if (UiTheme::chip(label, active, ImVec2(0, 30))) action();
-        };
-        drawStatusChip(bloom ? "Bloom ON" : "Bloom OFF", bloom, [&] { bloom = !bloom; });
-        drawStatusChip(audio.muted() ? "Sound MUTED (K)" : "Sound ON (K)", !audio.muted(), [&] { audio.toggleMute(); });
-        drawStatusChip(lensing ? "Lensing ON" : "Lensing OFF", lensing, [&] { lensing = !lensing; });
-        drawStatusChip(instancing ? "Instancing ON" : "Instancing OFF", instancing, [&] { instancing = !instancing; });
-        drawStatusChip(meteorsEnabled ? "Meteors ON" : "Meteors OFF", meteorsEnabled,
-                       [&] { meteorsEnabled = !meteorsEnabled; });
-        drawStatusChip(cityMarkersEnabled ? "Cities ON (N)" : "Cities OFF (N)", cityMarkersEnabled,
-                       [&] { cityMarkersEnabled = !cityMarkersEnabled; });
-        drawStatusChip(highQuality ? "Quality High" : "Quality Low", highQuality, [&] {
-            highQuality = !highQuality;
-            applyQualitySettings();
-        });
-        char holeChip[64];
-        std::snprintf(holeChip, sizeof(holeChip), "Black hole %s p=%.0f%%", blackHole.getStateName(),
-                      blackHole.getThreatProgress() * 100.0f);
-        drawStatusChip(holeChip, !blackHole.isIdle(), [&] {
-          if (gameplayActive) {
-            if (blackHole.isIdle()) {
-                if (galaxyViewTarget) setGalaxyViewTarget(false);
-                blackHole.summon();
-            } else {
-                blackHole.returnBack();
-            }
-          }
-        });
-        ImGui::Separator();
-        if (audio.available()) {
-            float masterVolume = audio.master();
-            if (ImGui::SliderFloat("Master volume", &masterVolume, 0.0f, 1.0f, "%.0f%%"))
-                audio.setMaster(masterVolume);
-        }
-        ImGui::BeginChild("panel_content", ImVec2(0, 0), false);
-        ImGui::TextWrapped("Bloom %s | Instancing %s | Meteors: %s | Lensing: %s",
-                    bloom ? "ON" : "OFF", instancing ? "ON" : "OFF",
-                    meteorsEnabled ? "ON" : "OFF", lensing ? "ON" : "OFF");
-        ImGui::TextWrapped("Quality: %s | Black hole: %s p=%.0f%% | Light %.1f deg",
-                    highQuality ? "High" : "Low", blackHole.getStateName(),
-                    blackHole.getThreatProgress() * 100.0f, lightAngle * 57.2957795f);
+        ImGui::SetNextWindowBgAlpha(UiTheme::Background.w);
+        ImGui::Begin("Mission Control", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings);
         UiTheme::header();
-        const char *viewName = galaxyViewTarget ? "Milky Way" : "Solar System";
-        ImGui::Text("View: %s", viewName);
-        const bool canChangeView = gameState == GameState::FreeExplore && blackHole.isIdle();
-        const float segmentWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-        if (UiTheme::SmallFont) ImGui::PushFont(UiTheme::SmallFont);
-        ImGui::BeginDisabled(!canChangeView);
-        if (UiTheme::chip("Solar System", !galaxyViewTarget, ImVec2(segmentWidth / UiTheme::UiScale, 30))) {
-            setGalaxyViewTarget(false);
-            std::cout << "View: Solar System\n";
-        }
-        ImGui::SameLine();
-        if (UiTheme::chip("Milky Way", galaxyViewTarget, ImVec2(segmentWidth / UiTheme::UiScale, 30))) {
-            setGalaxyViewTarget(true);
-            std::cout << "View: Milky Way\n";
-        }
-        ImGui::EndDisabled();
-        if (UiTheme::SmallFont) ImGui::PopFont();
-        if (!canChangeView && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Available in Free Explore while the black hole is Idle.");
-        UiTheme::hero();
-        ImGui::TextDisabled("Milky Way mode is a stylized visualization.");
-        ImGui::TextWrapped("Asteroids: %zu | draw calls: %d",
-                    highQuality ? ASTEROID_COUNT_HIGH : ASTEROID_COUNT_LOW, asteroidDrawCalls);
-        if (gameState == GameState::Mission)
-            ImGui::ProgressBar(activeThreat().getThreatProgress(), ImVec2(-1, 0),
-                               "Threat approaching");
-        ImGui::Separator();
-        if (gameplayActive) {
-            ImGui::SeparatorText("WORLDS");
-            for (std::size_t i = 0; i < bodies.size(); ++i) {
+        const std::string fixedTeam = "TEAM  " + UiTheme::teamCredit().substr(4);
+        ImGui::TextWrapped("%s", fixedTeam.c_str());
+        ImGui::TextWrapped("TOPIC  EVENT HORIZON: SOLAR SYSTEM EXPLORER");
+        const char *fixedStatus = gameState == GameState::StartScreen ? "READY" :
+            gameState == GameState::Mission ? "ACTIVE" : gameState == GameState::FreeExplore ? "FREE EXPLORE" :
+            gameState == GameState::Won ? "COMPLETE" : "ENDED";
+        if (UiTheme::DataFont) ImGui::PushFont(UiTheme::DataFont);
+        ImGui::TextWrapped("%s  |  SCORE %d / %d", fixedStatus, missionScore, MISSION_TARGET_SCORE);
+        if (UiTheme::DataFont) ImGui::PopFont();
+        char fixedToggles[192];
+        std::snprintf(fixedToggles, sizeof(fixedToggles), "G %s · L %s · I %s · M %s · N %s · P %s · Q %s",
+            bloom ? "ON" : "OFF", lensing ? "ON" : "OFF", instancing ? "ON" : "OFF",
+            meteorsEnabled ? "ON" : "OFF", cityMarkersEnabled ? "ON" : "OFF", mapPanelOpen ? "ON" : "OFF",
+            highQuality ? "HIGH" : "LOW");
+        if (UiTheme::LabelFont) ImGui::PushFont(UiTheme::LabelFont);
+        ImGui::TextWrapped("%s", fixedToggles);
+        if (UiTheme::LabelFont) ImGui::PopFont();
+        ImGui::TextWrapped("VIEW %s · SOUND %s · BLACK HOLE %s",
+            galaxyViewTarget ? "MILKY WAY" : "SOLAR SYSTEM",
+            !audio.available() ? "UNAVAILABLE" : audio.muted() ? "MUTED" : "ON",
+            blackHole.getStateName());
+        UiTheme::HairlineRule();
+        ImGui::BeginChild("panel_content", ImVec2(0, 0), false);
+        UiTheme::SectionHeader("01", "OBJECT");
+        auto drawWorldRow = [&](const char *name, const char *distanceText, const char *index, bool isSelected, auto onClick) {
+            const float h = 30.0f * UiTheme::UiScale, w = ImGui::GetContentRegionAvail().x;
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            const bool clicked = ImGui::InvisibleButton(name, ImVec2(w, h));
+            ImDrawList *dl = ImGui::GetWindowDrawList();
+            const float dpi = UiTheme::DpiScale;
+            auto snap = [dpi](float value) { return std::round(value * dpi) / dpi; };
+            const ImVec2 start(snap(p.x), snap(p.y)), end(snap(p.x + w), snap(p.y + h));
+            if (ImGui::IsItemHovered()) dl->AddRectFilled(start, end, IM_COL32(255,255,255,15));
+            if (isSelected) dl->AddRectFilled(start, ImVec2(start.x + 2 * dpi, end.y),
+                                               ImGui::ColorConvertFloat4ToU32(UiTheme::Accent));
+            ImFont *mono = UiTheme::DataFont ? UiTheme::DataFont : ImGui::GetFont();
+            dl->AddText(mono, mono->FontSize, ImVec2(p.x + 6 * UiTheme::UiScale, p.y + (h-mono->FontSize)*0.5f),
+                        ImGui::ColorConvertFloat4ToU32(UiTheme::Secondary), index);
+            dl->AddText(UiTheme::BodyFont, UiTheme::BodyFont->FontSize,
+                        ImVec2(p.x + 42 * UiTheme::UiScale, p.y + (h-UiTheme::BodyFont->FontSize)*0.5f),
+                        ImGui::ColorConvertFloat4ToU32(UiTheme::PanelText), name);
+            const float vw = mono->CalcTextSizeA(mono->FontSize, FLT_MAX, 0, distanceText).x;
+            dl->AddText(mono, mono->FontSize, ImVec2(end.x-vw, p.y+(h-mono->FontSize)*0.5f),
+                        ImGui::ColorConvertFloat4ToU32(UiTheme::Secondary), distanceText);
+            if (clicked) onClick();
+        };
+        if (selected < 0) {
+            ImFont *tableLabel = UiTheme::LabelFont;
+            const ImVec2 headPos = ImGui::GetCursorScreenPos();
+            const float headSize = tableLabel->FontSize;
+            const float contentWidth = ImGui::GetContentRegionAvail().x;
+            const float distanceWidth = tableLabel->CalcTextSizeA(headSize, FLT_MAX, 0.0f, "FROM SUN · AU").x;
+            ImDrawList *tableDraw = ImGui::GetWindowDrawList();
+            tableDraw->AddText(tableLabel, headSize, ImVec2(headPos.x, headPos.y),
+                ImGui::ColorConvertFloat4ToU32(UiTheme::Tertiary), "NO.");
+            tableDraw->AddText(tableLabel, headSize, ImVec2(headPos.x + 42.0f * UiTheme::UiScale, headPos.y),
+                ImGui::ColorConvertFloat4ToU32(UiTheme::Tertiary), "WORLD");
+            tableDraw->AddText(tableLabel, headSize,
+                ImVec2(headPos.x + contentWidth - distanceWidth, headPos.y),
+                ImGui::ColorConvertFloat4ToU32(UiTheme::Tertiary), "FROM SUN · AU");
+            ImGui::Dummy(ImVec2(0, headSize + 5.0f * UiTheme::UiScale));
+            ImGui::BeginDisabled(!gameplayActive);
+            for (std::size_t i=0; i<bodies.size(); ++i) {
                 if (bodyEffect(static_cast<int>(i)).swallowed) continue;
-                char subtitle[128];
-                std::snprintf(subtitle, sizeof(subtitle), "%s  |  %.1f million km from Sun",
-                              bodies[i].type.c_str(), bodies[i].distanceMillionKm);
-                const glm::vec3 tint = bodies[i].color;
-                if (UiTheme::planetCard(bodies[i].name.c_str(), subtitle,
-                                        ImVec4(tint.r, tint.g, tint.b, 1.0f),
-                                        selected == static_cast<int>(i)))
-                    selectBody(static_cast<int>(i));
+                char idx[8], au[32]; std::snprintf(idx,sizeof(idx),"%02zu",i+1);
+                std::snprintf(au,sizeof(au),"%.3f AU",bodies[i].distanceMillionKm/149.6);
+                drawWorldRow(bodies[i].name.c_str(),au,idx,false,[&,i]{selectBody(static_cast<int>(i));});
             }
-            if (!bodyEffect(8).swallowed &&
-                UiTheme::planetCard("Sun", "Star  |  centre of the system",
-                                    ImVec4(1.0f, 0.72f, 0.20f, 1.0f), selected == 8))
-                selectBody(8);
-        }
-        if (selected >= 0) {
-            const Body &b = selected == 8 ? sunBody : bodies[static_cast<std::size_t>(selected)];
-            ImGui::Separator();
-            ImGui::BeginChild("world_info_card", ImVec2(0, 460.0f * UiTheme::UiScale), true);
-            ImGui::TextColored(UiTheme::Accent, "%s", b.name.c_str());
-            ImGui::TextColored(UiTheme::Secondary, "%s", b.type.c_str());
-            ImGui::Separator();
-            char value[96];
-            std::snprintf(value, sizeof(value), "%.0f km", b.diameterKm);
-            UiTheme::keyValue("Diameter", value);
-            std::snprintf(value, sizeof(value), "%.4g kg", b.massKg);
-            UiTheme::keyValue("Mass", value);
-            std::snprintf(value, sizeof(value), "%.1f million km", b.distanceMillionKm);
-            UiTheme::keyValue("Distance from Sun", value);
-            std::snprintf(value, sizeof(value), "%.2f days", b.orbitalDays);
-            UiTheme::keyValue("Orbital period", value);
-            std::snprintf(value, sizeof(value), "%.3f days", b.rotationPeriodDays);
-            UiTheme::keyValue("Rotation period", value);
-            std::snprintf(value, sizeof(value), "%.2f m/s^2", b.gravity);
-            UiTheme::keyValue("Gravity", value);
-            if (b.name == "Earth")
-                UiTheme::keyValue("Moons", "1");
+            if (!bodyEffect(8).swallowed) drawWorldRow("Sun","—","00",false,[&]{selectBody(8);});
+            ImGui::EndDisabled();
+        } else {
+            const Body &b = selected==8 ? sunBody : bodies[static_cast<std::size_t>(selected)];
+            if (UiTheme::GhostButton("< ALL WORLDS",ImVec2(142,26))) {
+                selected=-1; factsExpanded=false; distance=overviewDistance; flying=true;
+                flyElapsed=0; startCamera=currentCamera; startTarget=cameraTarget;
+            }
+            ImGui::Spacing();
+            if (selected==8) UiTheme::Tag("G-TYPE STAR");
             else {
-                std::snprintf(value, sizeof(value), "%d", b.moons);
-                UiTheme::keyValue("Moons", value);
+                const int ordinal=selected+1;
+                const char *suffix=ordinal%100>=11 && ordinal%100<=13 ? "th" :
+                    ordinal%10==1 ? "st" : ordinal%10==2 ? "nd" : ordinal%10==3 ? "rd" : "th";
+                char category[128];
+                std::snprintf(category,sizeof(category),"%s · %d%s FROM THE SUN",b.type.c_str(),ordinal,suffix);
+                for(char *c=category;*c;++c)*c=static_cast<char>(std::toupper(static_cast<unsigned char>(*c)));
+                UiTheme::Tag(category);
             }
-            if (b.name == "Earth" && hasEarthCoordinate) {
-                char coordinate[96];
-                std::snprintf(coordinate, sizeof(coordinate), "Lat %.2f %c, Lon %.2f %c",
-                              std::abs(pickedLatitude), pickedLatitude >= 0.0f ? 'N' : 'S',
-                              std::abs(pickedLongitude), pickedLongitude >= 0.0f ? 'E' : 'W');
-                UiTheme::keyValue("Coordinates", coordinate);
+            if(UiTheme::TitleFont)ImGui::PushFont(UiTheme::TitleFont);
+            ImGui::TextWrapped("%s",b.name.c_str());
+            if(UiTheme::TitleFont)ImGui::PopFont();
+            std::string description;
+            for(const std::string &fact:b.facts) {
+                if(!description.empty())description+=" ";
+                description+=fact;
+                if(!fact.empty()&&fact.back()!='.'&&fact.back()!='!'&&fact.back()!='?')description+=".";
+            }
+            ImGui::PushTextWrapPos(); ImGui::TextColored(UiTheme::Secondary,"%s",description.c_str()); ImGui::PopTextWrapPos();
+            ImGui::TextColored(UiTheme::Accent,factsExpanded?"LESS":"MORE");
+            if(ImGui::IsItemClicked())factsExpanded=!factsExpanded;
+            if(factsExpanded)for(const std::string &fact:b.facts)ImGui::BulletText("%s",fact.c_str());
+            UiTheme::HairlineRule();
+            char value[128];
+            if(b.diameterKm>0){std::snprintf(value,sizeof(value),"%.0f",b.diameterKm);UiTheme::LabelValueRow("DIAMETER",value,"km");}
+            if(b.massKg>0){std::snprintf(value,sizeof(value),"%.4g",b.massKg);UiTheme::LabelValueRow("MASS",value,"kg");}
+            if(selected!=8&&b.distanceMillionKm>0){
+                std::snprintf(value,sizeof(value),"%.1f",b.distanceMillionKm);UiTheme::LabelValueRow("MEAN DISTANCE",value,"10^6 km");
+                std::snprintf(value,sizeof(value),"%.3f",b.distanceMillionKm/149.6);
+                UiTheme::LabelValueRow("ORBITAL DISTANCE",value,"AU");
+                std::snprintf(value,sizeof(value),"%.2f",b.distanceMillionKm*1000000.0/(299792.458*60.0));
+                UiTheme::LabelValueRow("LIGHT TRAVEL TIME",value,"min");
+            }
+            if(b.orbitalDays>0){std::snprintf(value,sizeof(value),"%.5g",b.orbitalDays);UiTheme::LabelValueRow("ORBITAL PERIOD",value,"days");}
+            if(b.rotationPeriodDays!=0){std::snprintf(value,sizeof(value),"%.5g",b.rotationPeriodDays);UiTheme::LabelValueRow("ROTATION PERIOD",value,"days");}
+            if(b.gravity>0){std::snprintf(value,sizeof(value),"%.3g",b.gravity);UiTheme::LabelValueRow("SURFACE GRAVITY",value,"m/s²");}
+            if(b.moons>=0){std::snprintf(value,sizeof(value),"%d",b.moons);UiTheme::LabelValueRow("MOONS",value,"moons");}
+            if(b.name=="Earth"&&hasEarthCoordinate){
+                char coord[96];std::snprintf(coord,sizeof(coord),"%.2f° %c / %.2f° %c",std::abs(pickedLatitude),pickedLatitude>=0?'N':'S',std::abs(pickedLongitude),pickedLongitude>=0?'E':'W');
+                UiTheme::LabelValueRow("COORDINATES",coord,"");
             }
             if (b.name == "Earth" && distance <= 5.0f) {
-                ImGui::SetNextItemOpen(mapPanelOpen, ImGuiCond_Always);
-                mapPanelOpen = ImGui::CollapsingHeader("Map");
+                if (UiTheme::GhostButton(mapPanelOpen ? "HIDE EARTH MAP" : "EARTH MAP", ImVec2(-1, 28)))
+                    mapPanelOpen = !mapPanelOpen;
                 if (mapPanelOpen) {
                     const ImVec2 mapSize(std::max(180.0f, ImGui::GetContentRegionAvail().x), 132.0f);
                     ImGui::InvisibleButton("Earth map viewport", mapSize);
@@ -2075,13 +2148,13 @@ void Application::run() {
                             if (cityU < u0 || cityU > u1 || cityV < v0 || cityV > v1) continue;
                             const ImVec2 point(topLeft.x + (cityU - u0) / visible * mapSize.x,
                                                topLeft.y + (cityV - v0) / visible * mapSize.y);
-                            mapDraw->AddCircleFilled(point, 2.0f, IM_COL32(255, 220, 135, 235));
+                            mapDraw->AddCircleFilled(point, 2.0f, ImGui::ColorConvertFloat4ToU32(UiTheme::Accent));
                         }
                     }
                     const ImVec2 center((topLeft.x + bottomRight.x) * 0.5f, (topLeft.y + bottomRight.y) * 0.5f);
-                    mapDraw->AddCircle(center, 5.0f, IM_COL32(255, 215, 70, 255), 0, 2.0f);
-                    mapDraw->AddLine(ImVec2(center.x - 8, center.y), ImVec2(center.x + 8, center.y), IM_COL32(255, 215, 70, 210));
-                    mapDraw->AddLine(ImVec2(center.x, center.y - 8), ImVec2(center.x, center.y + 8), IM_COL32(255, 215, 70, 210));
+                    mapDraw->AddCircle(center, 5.0f, ImGui::ColorConvertFloat4ToU32(UiTheme::Accent), 0, 1.0f / UiTheme::DpiScale);
+                    mapDraw->AddLine(ImVec2(center.x - 8, center.y), ImVec2(center.x + 8, center.y), ImGui::ColorConvertFloat4ToU32(UiTheme::Accent), 1.0f / UiTheme::DpiScale);
+                    mapDraw->AddLine(ImVec2(center.x, center.y - 8), ImVec2(center.x, center.y + 8), ImGui::ColorConvertFloat4ToU32(UiTheme::Accent), 1.0f / UiTheme::DpiScale);
                     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
                         const ImVec2 mouse = ImGui::GetIO().MousePos;
                         const float mapU = u0 + (mouse.x - topLeft.x) / mapSize.x * visible;
@@ -2101,158 +2174,230 @@ void Application::run() {
                                   << ", Lon " << std::abs(pickedLongitude)
                                   << (pickedLongitude >= 0 ? " E" : " W") << std::defaultfloat << '\n';
                     }
-                    ImGui::Text("Wheel: zoom | Drag: pan | Click: fly to location");
+                    ImGui::TextWrapped("Wheel: zoom | Drag: pan | Click: fly to location");
                 }
             }
-            if (UiTheme::SmallFont) ImGui::PushFont(UiTheme::SmallFont);
-            for (const std::string &fact : b.facts) {
-                ImGui::Bullet();
-                ImGui::SameLine();
-                ImGui::PushTextWrapPos();
-                ImGui::TextColored(UiTheme::Secondary, "%s", fact.c_str());
-                ImGui::PopTextWrapPos();
-            }
-            if (UiTheme::SmallFont) ImGui::PopFont();
-            const float actionWidth = (ImGui::GetContentRegionAvail().x - 10.0f) * 0.5f /
-                                      UiTheme::UiScale;
-            if (UiTheme::button("Start Quiz", true, ImVec2(actionWidth, 38)))
-                beginQuiz();
-            ImGui::SameLine();
-            if (UiTheme::button("Back", false, ImVec2(actionWidth, 38))) {
-                selected = -1;
-                distance = overviewDistance;
-                flying = true;
-                flyElapsed = 0;
-                startCamera = currentCamera;
-                startTarget = cameraTarget;
-            }
-            ImGui::EndChild();
+            if (UiTheme::PrimaryButton("START QUIZ")) beginQuiz();
         }
-        ImGui::Separator();
-        if (gameState == GameState::FreeExplore)
-            ImGui::Text("Esc: back to overview");
-        if (selected == 2)
-            ImGui::TextWrapped("N: cities %s | P: map panel %s", cityMarkersEnabled ? "ON" : "OFF",
-                               mapPanelOpen ? "open" : "closed");
-        ImGui::TextWrapped(
-            "RMB drag: camera | Wheel: zoom | F: free-fly | WASD move | Shift faster");
-        if (ImGui::CollapsingHeader("CONTROLS"))
-            UiPanels::controlsList();
+        UiTheme::SectionHeader("02","SIMULATION");
+        char days[48];std::snprintf(days,sizeof(days),"%.3f",simTime/86400.0);
+        UiTheme::LabelValueRow("TIME",days,"days · stylised");
+        ImGui::TextColored(UiTheme::Secondary,"SPEED");
+        for(int option:{1,5,10}){
+            if(option!=1)ImGui::SameLine(0,4*UiTheme::UiScale);
+            char speedLabel[8];std::snprintf(speedLabel,sizeof(speedLabel),"%dx",option);
+            if(speed==option)ImGui::TextColored(UiTheme::Accent,"%s",speedLabel);
+            else if(UiTheme::GhostButton(speedLabel,ImVec2(48,25)))speed=option;
+        }
+        if(UiTheme::GhostButton(paused?"RESUME [SPACE]":"PAUSE [SPACE]",ImVec2(150,28)))paused=!paused;
+        ImGui::TextColored(UiTheme::Secondary,"VIEW");
+        const bool canChangeView=gameState==GameState::FreeExplore&&blackHole.isIdle();
+        ImGui::BeginDisabled(!canChangeView);
+        if (UiTheme::LabelFont) ImGui::PushFont(UiTheme::LabelFont);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * UiTheme::UiScale,
+                                                               6.0f * UiTheme::UiScale));
+        if (ImGui::BeginTable("view_switch", 2, ImGuiTableFlags_SizingStretchSame |
+                              ImGuiTableFlags_NoSavedSettings)) {
+            ImGui::TableNextColumn();
+            if (!galaxyViewTarget) ImGui::TextColored(UiTheme::Accent, "SOLAR SYSTEM");
+            else if (UiTheme::GhostButton("SOLAR SYSTEM", ImVec2(-1, 27))) setGalaxyViewTarget(false);
+            ImGui::TableNextColumn();
+            if (galaxyViewTarget) ImGui::TextColored(UiTheme::Accent, "MILKY WAY");
+            else if (UiTheme::GhostButton("MILKY WAY", ImVec2(-1, 27))) setGalaxyViewTarget(true);
+            ImGui::EndTable();
+        }
+        ImGui::PopStyleVar();
+        if (UiTheme::LabelFont) ImGui::PopFont();
+        ImGui::EndDisabled();
+        UiTheme::SectionHeader("03","INSTRUMENTS");
+        if(UiTheme::ToggleRow("BLOOM","G",bloom))bloom=!bloom;
+        if(UiTheme::ToggleRow("LENSING","L",lensing))lensing=!lensing;
+        if(UiTheme::ToggleRow("INSTANCING","I",instancing))instancing=!instancing;
+        if(UiTheme::ToggleRow("METEORS","M",meteorsEnabled))meteorsEnabled=!meteorsEnabled;
+        if(UiTheme::ToggleRow("MARKERS","N",cityMarkersEnabled))cityMarkersEnabled=!cityMarkersEnabled;
+        ImGui::BeginDisabled(selected!=2);
+        if(UiTheme::ToggleRow("MAP","P",mapPanelOpen)){
+            mapPanelOpen=!mapPanelOpen;
+            if(mapPanelOpen&&distance>4.5f){
+                distance=4.5f;flyCameraOffset=glm::vec3(distance*std::cos(pitch)*std::sin(yaw),distance*std::sin(pitch),distance*std::cos(pitch)*std::cos(yaw));
+                startCamera=currentCamera;startTarget=cameraTarget;flyElapsed=0;flying=true;
+            }
+        }
+        ImGui::EndDisabled();
+        if(UiTheme::ToggleRow("QUALITY","Q",highQuality)){highQuality=!highQuality;applyQualitySettings();}
+        const char *holeState=blackHole.getStateName();
+        const bool danger=std::string(holeState)=="Consuming";
+        ImGui::PushTextWrapPos();
+        ImGui::TextColored(danger?UiTheme::Alert:UiTheme::Secondary,"BLACK HOLE  %s  %.0f%%",holeState,blackHole.getThreatProgress()*100);
+        ImGui::PopTextWrapPos();
+        const float holeButtonWidth=(ImGui::GetContentRegionAvail().x/UiTheme::UiScale-4.0f)*0.5f;
+        if(UiTheme::GhostButton("SUMMON [B]",ImVec2(holeButtonWidth,27))&&gameplayActive&&blackHole.isIdle()){
+            if(galaxyViewTarget)setGalaxyViewTarget(false);freeExploreSwallowedDismissed=false;blackHole.summon();
+        }
+        ImGui::SameLine(0,4*UiTheme::UiScale);
+        if(UiTheme::GhostButton("RETURN [R]",ImVec2(holeButtonWidth,27))){
+            if(gameState==GameState::FreeExplore){if(blackHole.isSunSwallowed())startFreeExplore();else blackHole.returnBack();}
+            else if(gameState==GameState::Mission||gameState==GameState::Won||gameState==GameState::Lost)startMission();
+        }
+        ImGui::TextColored(UiTheme::Secondary,"SOUND");
+        if(audio.available()){
+            ImGui::PushID("master_volume_track");
+            const ImVec2 p=ImGui::GetCursorScreenPos();const float w=ImGui::GetContentRegionAvail().x;
+            const float y=p.y+6*UiTheme::DpiScale;
+            ImGui::InvisibleButton("track",ImVec2(w,14*UiTheme::DpiScale));
+            if(ImGui::IsItemActive())audio.setMaster(std::clamp((ImGui::GetIO().MousePos.x-p.x)/w,0.0f,1.0f));
+            const float fill=audio.master()*w;ImDrawList *dl=ImGui::GetWindowDrawList();
+            dl->AddLine(ImVec2(p.x,y),ImVec2(p.x+w,y),ImGui::ColorConvertFloat4ToU32(UiTheme::Hairline),1/UiTheme::DpiScale);
+            dl->AddLine(ImVec2(p.x,y),ImVec2(p.x+fill,y),ImGui::ColorConvertFloat4ToU32(UiTheme::Accent),2/UiTheme::DpiScale);
+            dl->AddRectFilled(ImVec2(p.x+fill-4*UiTheme::DpiScale,y-4*UiTheme::DpiScale),ImVec2(p.x+fill+4*UiTheme::DpiScale,y+4*UiTheme::DpiScale),ImGui::ColorConvertFloat4ToU32(UiTheme::Accent));
+            ImGui::PopID();
+        }else ImGui::TextDisabled("%s",audio.status());
+        if(UiTheme::ToggleRow("MUTE","K",audio.muted()))audio.toggleMute();
+        UiTheme::SectionHeader("04","MISSION");
+        ImGui::TextColored(UiTheme::Secondary,"STATUS");ImGui::SameLine();
+        ImGui::TextColored(UiTheme::PanelText,"%s",gameState==GameState::StartScreen?"READY":gameState==GameState::Mission?"ACTIVE":gameState==GameState::FreeExplore?"FREE EXPLORE":gameState==GameState::Won?"COMPLETE":"ENDED");
+        if(UiTheme::HeroFont)ImGui::PushFont(UiTheme::HeroFont);
+        ImGui::Text("SCORE  %d / %d",missionScore,MISSION_TARGET_SCORE);
+        if(UiTheme::HeroFont)ImGui::PopFont();
+        const std::string team="TEAM  "+UiTheme::teamCredit().substr(4);
+        ImGui::TextWrapped("%s",team.c_str());
+        ImGui::TextWrapped("TOPIC  EVENT HORIZON: SOLAR SYSTEM EXPLORER");
+        if(gameState==GameState::Mission){
+            char threat[32];std::snprintf(threat,sizeof(threat),"%.1f",activeThreat().getThreatProgress()*100.0f);
+            UiTheme::LabelValueRow("THREAT",threat,"%");
+        }
+        if(gameState==GameState::StartScreen){
+            if(UiTheme::PrimaryButton("START MISSION"))startMission();
+            if(UiTheme::GhostButton("FREE EXPLORE"))startFreeExplore();
+        }
+        if (UiTheme::GhostButton(controlsOpen ? "HIDE CONTROLS" : "CONTROLS", ImVec2(-1, 28)))
+            controlsOpen = !controlsOpen;
+        if (controlsOpen) UiPanels::controlsList();
         ImGui::EndChild();
         ImGui::End();
         if (help) {
-            UiPanels::beginCenteredCard("Controls", static_cast<float>(windowWidth),
-                                        static_cast<float>(windowHeight), 620, 480);
-            ImGui::TextColored(UiTheme::Accent, "CONTROLS");
+            UiPanels::beginCenteredCard("Controls",static_cast<float>(windowWidth),static_cast<float>(windowHeight),560,520);
+            UiTheme::SectionHeader("","CONTROLS");
+            ImGui::BeginChild("full_controls_list",ImVec2(0,0),false);
             UiPanels::controlsList();
+            ImGui::EndChild();
             UiPanels::endCenteredCard();
         }
         if (gameState == GameState::StartScreen) {
-            UiPanels::beginCenteredCard("Solar System Explorer", static_cast<float>(windowWidth),
-                                        static_cast<float>(windowHeight), 500, 270);
-            if (UiTheme::TitleFont) ImGui::PushFont(UiTheme::TitleFont);
-            ImGui::TextColored(UiTheme::White, "Explore the system");
-            if (UiTheme::TitleFont) ImGui::PopFont();
-            ImGui::TextWrapped(
-                "Visit worlds and answer questions before the threat reaches the Sun.");
-            if (UiTheme::button("Start Mission", true, ImVec2(-1, 40)))
-                startMission();
-            if (UiTheme::button("Free Explore", false, ImVec2(-1, 40)))
-                startFreeExplore();
+            UiPanels::beginCenteredCard("Solar System Explorer",static_cast<float>(windowWidth),static_cast<float>(windowHeight),420,250);
+            if(UiTheme::TitleFont)ImGui::PushFont(UiTheme::TitleFont);
+            ImGui::TextColored(UiTheme::PanelText,"MISSION CONTROL");
+            if(UiTheme::TitleFont)ImGui::PopFont();
+            ImGui::PushTextWrapPos();
+            ImGui::TextColored(UiTheme::Secondary,"Visit worlds and answer questions before the threat reaches the Sun.");
+            ImGui::PopTextWrapPos();
+            UiTheme::HairlineRule();
+            if(UiTheme::PrimaryButton("START MISSION"))startMission();
+            if(UiTheme::GhostButton("FREE EXPLORE"))startFreeExplore();
             UiPanels::endCenteredCard();
         }
-        if (gameState == GameState::Won || gameState == GameState::Lost) {
-            UiPanels::beginCenteredCard("Mission Result", static_cast<float>(windowWidth),
-                                        static_cast<float>(windowHeight), 460, 250);
-            ImGui::TextColored(UiTheme::Accent, gameState == GameState::Won ? "MISSION COMPLETE"
-                                                                            : "MISSION ENDED");
-            if (UiTheme::TitleFont) ImGui::PushFont(UiTheme::TitleFont);
-            ImGui::TextUnformatted(gameState == GameState::Won ? "Mission complete"
-                                                               : "The Sun was swallowed");
-            if (UiTheme::TitleFont) ImGui::PopFont();
-            ImGui::Text("Final score: %d / %d", missionScore, MISSION_TARGET_SCORE);
-            if (UiTheme::button("Restart", true, ImVec2(-1, 40)))
-                startMission();
-            if (gameState == GameState::Lost && UiTheme::button("Back to menu", false, ImVec2(-1, 38)))
-                returnToMenu();
+        if(gameState==GameState::Won||gameState==GameState::Lost){
+            UiPanels::beginCenteredCard("Mission Result",static_cast<float>(windowWidth),static_cast<float>(windowHeight),420,250);
+            const bool lost=gameState==GameState::Lost;
+            ImGui::TextColored(lost?UiTheme::Alert:UiTheme::Accent,lost?"THE SUN WAS SWALLOWED":"MISSION COMPLETE");
+            if(UiTheme::TitleFont)ImGui::PushFont(UiTheme::TitleFont);
+            ImGui::TextUnformatted(lost?"Mission ended":"Mission complete");
+            if(UiTheme::TitleFont)ImGui::PopFont();
+            if(UiTheme::DataFont)ImGui::PushFont(UiTheme::DataFont);
+            ImGui::Text("SCORE  %d / %d",missionScore,MISSION_TARGET_SCORE);
+            if(UiTheme::DataFont)ImGui::PopFont();
+            if(UiTheme::PrimaryButton("RESTART"))startMission();
+            if(lost&&UiTheme::GhostButton("BACK TO MENU"))returnToMenu();
             UiPanels::endCenteredCard();
         }
-        if (gameState == GameState::FreeExplore && blackHole.isSunSwallowed() &&
-            !freeExploreSwallowedDismissed) {
-            UiPanels::beginCenteredCard("Free Explore Ending", static_cast<float>(windowWidth),
-                                        static_cast<float>(windowHeight), 460, 230);
-            ImGui::TextColored(UiTheme::Accent, "SIMULATION ENDED");
-            if (UiTheme::TitleFont) ImGui::PushFont(UiTheme::TitleFont);
-            ImGui::TextUnformatted("The Sun was swallowed");
-            if (UiTheme::TitleFont) ImGui::PopFont();
-            if (UiTheme::button("Restart", true, ImVec2(-1, 40)))
-                startFreeExplore();
-            if (UiTheme::button("Keep watching", false, ImVec2(-1, 38)))
-                freeExploreSwallowedDismissed = true;
+        if(gameState==GameState::FreeExplore&&blackHole.isSunSwallowed()&&!freeExploreSwallowedDismissed){
+            UiPanels::beginCenteredCard("Free Explore Ending",static_cast<float>(windowWidth),static_cast<float>(windowHeight),420,230);
+            ImGui::TextColored(UiTheme::Alert,"THE SUN WAS SWALLOWED");
+            if(UiTheme::TitleFont)ImGui::PushFont(UiTheme::TitleFont);
+            ImGui::TextUnformatted("Simulation ended");
+            if(UiTheme::TitleFont)ImGui::PopFont();
+            if(UiTheme::PrimaryButton("RESTART"))startFreeExplore();
+            if(UiTheme::GhostButton("KEEP WATCHING"))freeExploreSwallowedDismissed=true;
             UiPanels::endCenteredCard();
         }
-        if (quizOpen) {
-            UiPanels::beginCenteredCard("Planet Quiz", static_cast<float>(windowWidth),
-                                        static_cast<float>(windowHeight), 560, 390, &quizOpen);
-            if (quizFinished || quizQuestionIndex >= quizRound.size()) {
-                ImGui::Text("Quiz complete");
-                ImGui::Text("Final score: %d / %d", quizScore, static_cast<int>(quizRound.size()));
-                if (UiTheme::button("Close", true, ImVec2(-1, 38))) {
-                    quizOpen = false;
-                    paused = quizWasPaused;
-                }
-            } else {
-                const QuizQuestion &q = questions[quizRound[quizQuestionIndex]];
-                ImGui::Text("Question %d / %d | Score %d", static_cast<int>(quizQuestionIndex + 1),
-                            static_cast<int>(quizRound.size()), quizScore);
-                ImGui::Separator();
-                ImGui::TextWrapped("%s", q.question.c_str());
-                if (!quizAnswered) {
-                    for (int i = 0; i < 4; ++i)
-                        if (UiTheme::button(quizDisplayChoices[static_cast<std::size_t>(i)].c_str(), false, ImVec2(-1, 36))) {
-                            quizChoice = i;
-                            quizAnswered = true;
-                            const bool correct = quizDisplayChoices[static_cast<std::size_t>(i)] == q.answer;
-                            if (correct)
-                                ++quizScore;
+        if(quizOpen){
+            UiPanels::beginCenteredCard("Planet Quiz",static_cast<float>(windowWidth),static_cast<float>(windowHeight),460,430,&quizOpen);
+            if(quizFinished||quizQuestionIndex>=quizRound.size()){
+                UiTheme::SectionHeader("","QUIZ COMPLETE");
+                if(UiTheme::HeroFont)ImGui::PushFont(UiTheme::HeroFont);
+                ImGui::Text("SCORE  %d / %d",quizScore,static_cast<int>(quizRound.size()));
+                if(UiTheme::HeroFont)ImGui::PopFont();
+                if(UiTheme::PrimaryButton("CLOSE")){quizOpen=false;paused=quizWasPaused;}
+            }else{
+                const QuizQuestion &q=questions[quizRound[quizQuestionIndex]];
+                char title[96],progress[32];
+                std::snprintf(title,sizeof(title),"QUIZ · %s",q.planet.c_str());
+                std::snprintf(progress,sizeof(progress),"Q %02zu / %02zu",quizQuestionIndex+1,quizRound.size());
+                UiTheme::Tag(title);
+                ImGui::SameLine(ImGui::GetWindowWidth()-ImGui::CalcTextSize(progress).x-32*UiTheme::UiScale);
+                if(UiTheme::DataFont)ImGui::PushFont(UiTheme::DataFont);
+                ImGui::TextColored(UiTheme::PanelText,"%s",progress);
+                if(UiTheme::DataFont)ImGui::PopFont();
+                UiTheme::HairlineRule();
+                ImGui::TextWrapped("%s",q.question.c_str());
+                if(!quizAnswered){
+                    for(int i=0;i<4;++i){
+                        const char *answer=quizDisplayChoices[static_cast<std::size_t>(i)].c_str();
+                        const float width=ImGui::GetContentRegionAvail().x;
+                        const float textWidth=width-40*UiTheme::UiScale;
+                        ImFont *font=UiTheme::BodyFont;
+                        const ImVec2 measured=font->CalcTextSizeA(font->FontSize,FLT_MAX,textWidth,answer);
+                        const float rowHeight=std::max(34*UiTheme::UiScale,measured.y+10*UiTheme::UiScale);
+                        const ImVec2 pos=ImGui::GetCursorScreenPos();
+                        const bool clicked=ImGui::InvisibleButton(answer,ImVec2(width,rowHeight));
+                        ImDrawList *dl=ImGui::GetWindowDrawList();
+                        if(ImGui::IsItemHovered()){
+                            const float dpi=UiTheme::DpiScale;
+                            auto snap=[dpi](float value){return std::round(value*dpi)/dpi;};
+                            dl->AddRectFilled(ImVec2(snap(pos.x),snap(pos.y)),
+                                ImVec2(snap(pos.x+width),snap(pos.y+rowHeight)),IM_COL32(255,255,255,15));
+                        }
+                        char letter[2]={static_cast<char>('A'+i),0};
+                        dl->AddText(UiTheme::DataFont,UiTheme::DataFont->FontSize,
+                            ImVec2(pos.x+4*UiTheme::UiScale,pos.y+5*UiTheme::UiScale),
+                            ImGui::ColorConvertFloat4ToU32(UiTheme::Secondary),letter);
+                        const ImVec2 textPos(pos.x+34*UiTheme::UiScale,pos.y+5*UiTheme::UiScale);
+                        const ImVec4 clip(pos.x+32*UiTheme::UiScale,pos.y,pos.x+width,pos.y+rowHeight);
+                        dl->AddText(font,font->FontSize,textPos,ImGui::ColorConvertFloat4ToU32(UiTheme::PanelText),
+                                    answer,nullptr,textWidth,&clip);
+                        dl->AddLine(ImVec2(pos.x,pos.y+rowHeight-0.5f/UiTheme::DpiScale),
+                            ImVec2(pos.x+width,pos.y+rowHeight-0.5f/UiTheme::DpiScale),
+                            ImGui::ColorConvertFloat4ToU32(UiTheme::Hairline),1/UiTheme::DpiScale);
+                        if(clicked){
+                            quizChoice=i;quizAnswered=true;
+                            const bool correct=quizDisplayChoices[static_cast<std::size_t>(i)]==q.answer;
+                            if(correct)++quizScore;
                             recordQuizAnswer(correct);
                         }
-                } else {
-                    ImGui::TextColored(
-                        quizChoice >= 0 &&
-                                quizDisplayChoices[static_cast<std::size_t>(quizChoice)] == q.answer
-                            ? ImVec4(0.3f, 1, 0.4f, 1)
-                            : ImVec4(1, 0.35f, 0.3f, 1),
-                        "%s",
-                        quizChoice >= 0 &&
-                                quizDisplayChoices[static_cast<std::size_t>(quizChoice)] == q.answer
-                            ? "Correct!"
-                            : "Not quite.");
-                    if (quizChoice < 0 ||
-                        quizDisplayChoices[static_cast<std::size_t>(quizChoice)] != q.answer)
-                        ImGui::Text("Correct answer: %s", q.answer.c_str());
-                    if (UiTheme::button(quizQuestionIndex + 1 == quizRound.size() ? "Show result"
-                                                                                  : "Next", true, ImVec2(-1, 38))) {
-                        ++quizQuestionIndex;
-                        quizAnswered = false;
-                        if (quizQuestionIndex >= quizRound.size()) {
-                            quizFinished = true;
-                        } else {
-                            quizChoice = -1;
-                            shuffleDisplayedChoices();
-                        }
+                    }
+                }else{
+                    const bool correct=quizChoice>=0&&quizDisplayChoices[static_cast<std::size_t>(quizChoice)]==q.answer;
+                    const ImVec2 p=ImGui::GetCursorScreenPos();
+                    ImGui::GetWindowDrawList()->AddLine(p,ImVec2(p.x+ImGui::GetContentRegionAvail().x,p.y),
+                        ImGui::ColorConvertFloat4ToU32(correct?UiTheme::Accent:UiTheme::Alert),2/UiTheme::DpiScale);
+                    ImGui::Dummy(ImVec2(0,6*UiTheme::UiScale));
+                    ImGui::TextColored(correct?UiTheme::Accent:UiTheme::Alert,correct?"CORRECT":"INCORRECT");
+                    if(!correct)ImGui::TextWrapped("Correct answer: %s",q.answer.c_str());
+                    if(UiTheme::DataFont)ImGui::PushFont(UiTheme::DataFont);
+                    ImGui::Text("SCORE %d / %d   THREAT SPEED %.2fx",quizScore,MISSION_TARGET_SCORE,threatSpeedMultiplier);
+                    if(UiTheme::DataFont)ImGui::PopFont();
+                    if(UiTheme::PrimaryButton(quizQuestionIndex+1==quizRound.size()?"SHOW RESULT":"NEXT QUESTION")){
+                        ++quizQuestionIndex;quizAnswered=false;
+                        if(quizQuestionIndex>=quizRound.size())quizFinished=true;
+                        else{quizChoice=-1;shuffleDisplayedChoices();}
                     }
                 }
-                if (UiTheme::button("Close", false, ImVec2(-1, 36))) {
-                    quizOpen = false;
-                    paused = quizWasPaused;
-                }
+                if(UiTheme::GhostButton("CLOSE")){quizOpen=false;paused=quizWasPaused;}
             }
             UiPanels::endCenteredCard();
-            if (!quizOpen)
-                paused = quizWasPaused;
+            if(!quizOpen)paused=quizWasPaused;
         }
-        ImGui::PopFont();
+        }        ImGui::PopFont();
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         if (screenshotRequested) {
@@ -2260,6 +2405,8 @@ void Application::run() {
             screenshotRequested = false;
         }
         glfwSwapBuffers(window);
+        if (!glfwGetWindowAttrib(window, GLFW_VISIBLE))
+            glfwShowWindow(window);
         glfwPollEvents();
     }
 }

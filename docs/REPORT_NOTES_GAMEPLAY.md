@@ -146,12 +146,12 @@ The state flow in plain language is: choose a mission or free exploration at the
 
 ## Gameplay and HUD controls
 
-The HUD displays the placeholder team name, project title, frame rate, simulation speed and pause state, mission status and score, Bloom/Lensing/Instancing states, quality and black-hole placeholder states, light angle, and mission threat progress. `G`, `L`, and `I` update and log their state; they do not connect effects that belong to teammate modules. `Q` switches between the full and reduced sphere meshes. `B` changes the black-hole HUD state only.
+The HUD displays the shared team names, project title, frame rate, simulation speed and pause state, mission status and score, Bloom/Lensing/Instancing states, quality and black-hole state, light angle, and mission threat progress. `G`, `L`, and `I` toggle their rendering features. `Q` switches between the full and reduced sphere meshes. `B` summons or returns the black hole during gameplay.
 
 `F1` or `H` toggles the key overlay. The listed controls are `Space`, `1`/`2`/`3`, `G`, `L`, `I`, `Q`, `B`, `R`, `F`, `[`/`]`, `Esc`, `F12`, left click, right mouse drag, wheel, `WASD`, and `Shift`. `F12` reads the rendered RGBA framebuffer and writes a vertically flipped PNG to `screenshots/`.
 # Interface notes
 
-The ImGui interface uses a small `UiTheme` module to keep its dark blue-black colors, muted secondary text, warm yellow accent, spacing, corner radii, and font setup together. `kUiTextScale = 1.2` multiplies each font's atlas pixel size by the GLFW content scale; it does not set `FontGlobalScale`, avoiding a second texture rescale. It requests Inter Regular for body text, Inter Bold for small caps, and Space Grotesk Bold for large headings. Missing or invalid optional TTF files warn and fall back to a scaled built-in ImGui font. `UiPanels` shares centered-card and control-list layouts so the collapsed panel controls and F1 help show the same keys.
+The ImGui interface uses `UiTheme` for its near-black background, white/secondary/tertiary text, 14%-white hairlines, single amber accent, alert red, spacing, and font setup. It uses square corners and data-first rows instead of decorative cards. `kUiTextScale = 1.2` is combined with GLFW content DPI when fonts are rasterized; `FontGlobalScale` stays at 1.0. Static Inter Regular, Medium, and SemiBold files are discovered by filename for interface text. Static JetBrains Mono Regular and Medium files supply measurements and readouts. Variable fonts are rejected because the TrueType loader cannot select their axis values. The font atlas is rebuilt when content DPI changes; pixel snapping and 2x1 oversampling keep small labels crisp without excess vertical smoothing. Missing fonts use size-matched built-in fonts and a console warning. Both families use the SIL Open Font License; see `assets/fonts/README.txt` for expected names and attribution. `UiPanels` supplies centered hairline cards and a two-column key/action help table.
 
 ## Offline Earth map
 
@@ -162,6 +162,29 @@ City pins use `positionLocal = R * (cos(lat) cos(lon), sin(lat), cos(lat) sin(lo
 When `earth_day.jpg` is absent, a 1024×512 equirectangular map is generated once at startup using the Earth shader's four-octave value-noise land/ocean field and palette. Map UVs use the same longitude seam and north-at-top convention as the shader; dragging pans, wheel zooms, and clicking sets a smoothly followed local surface target. **This is an offline map, not live tiles.**
 
 The right panel width is 26% of the logical window, clamped to 300–460 pixels and capped at 40% of the window; `kPanelOnRight` selects the dock side. The pinned status strip stays visible above the scrollable ImGui content while scene rendering and mouse-picking's existing `WantCaptureMouse` guard stay unchanged. Planet cards preserve the existing selection/fly-to call, and state chips update the same rendering flags as their keyboard shortcuts. This interface is a presentation-only change: it does not alter mission, quiz, physics, or black-hole rules.
+
+Selected-world details use the same fact strings as `assets/planets.json`. The category adds the order from the Sun and upper-cases the stored type. Stats rows show fields available in the data; values and source JSON are not modified. For a distance stored in kilometres, the conversions are:
+
+```text
+AU = distance_km / 149.6e6
+light_minutes = distance_km / (299792.458 km/s * 60 s/min)
+```
+
+The JSON distance is stored in millions of kilometres, so the implementation multiplies by 1,000,000 before applying the light-time formula and divides by 149.6 to obtain AU. Team names live in one constant array and are formatted for both the splash credit and the HUD.
+
+The panel is arranged as an overview table or selected-world datasheet, followed by simulation, instruments, mission, and controls sections. Labels are compact, values align in monospaced type with units, and hairlines separate groups. Amber marks active controls; red signals only danger or an incorrect quiz answer. Corner readouts use draw lists and do not capture mouse input.
+
+## Startup intro timeline
+
+The startup splash draws over the regular scene after the HDR, bloom, and tone-mapping composite. It runs once per process; it does not alter mission state or block event polling. The timeline uses real frame time clamped to 0.05 seconds. Every transition uses smootherstep:
+
+```text
+s(t) = 6t^5 - 15t^4 + 10t^3, where t is clamped to [0, 1]
+```
+
+From 0.0 to 0.8 seconds the dark overlay falls from 1.0 to 0.55. Between 0.8 and 2.2 seconds the title appears and scales from 0.94 to 1.0. The yellow line grows from 1.4 to 2.4 seconds; the credit fades in from 2.0 to 3.0 seconds. The scene holds until 4.4 seconds, then all overlay content fades away by 5.2 seconds. Any key or mouse click starts a 0.4-second fade from the current visual state; Escape is included as an ordinary key. `--no-intro` disables the splash for that launch. The GLFW window remains hidden until its first complete frame is swapped, avoiding an uninitialized clear-color flash.
+
+In plain language, the title and credit are drawn on top of the actual animated Solar System, rather than on a video or still image. Smooth transitions prevent abrupt changes, and the same team-name constant keeps the splash and HUD in sync.
 
 ## Quiz randomization
 
