@@ -7,6 +7,7 @@
 #include "PostProcess.h"
 #include "QuizRandomizer.h"
 #include "Audio.h"
+#include "Intro.h"
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <cstddef>
@@ -69,7 +70,7 @@ struct CityPinVertex { glm::vec3 position; float opacity; };
 
 class Application {
 public:
-    bool init();
+    bool init(bool introEnabled = true);
     void run();
     ~Application();
 
@@ -125,6 +126,7 @@ private:
     std::uint32_t activeQuizSeed = 0;
     BlackHole blackHole;
     Audio audio;
+    Intro intro;
     FallbackThreat fallbackThreat; // Legacy alternative; the real black hole is selected by default.
 
     int width = 1280;
@@ -147,6 +149,7 @@ private:
     bool lastYDown = false;
     bool cityMarkersEnabled = true;
     bool mapPanelOpen = false;
+    bool factsExpanded = false;
     bool lastNDown = false, lastPDown = false;
     float mapZoom = 1.0f;
     glm::vec2 mapPan{0.0f, 0.0f};
@@ -166,6 +169,7 @@ private:
     bool useFallbackThreat = false;
     bool paused = false;
     bool help = false;
+    bool controlsOpen = false;
     bool freeFly = false;
     bool flying = false;
     bool quizOpen = false;
@@ -173,6 +177,7 @@ private:
     bool quizAnswered = false;
     bool quizFinished = false;
     bool lastFDown = false;
+    bool lastSpaceDown = false;
     bool lastLeftDown = false;
     bool lastEscapeDown = false;
     bool lastGDown = false;

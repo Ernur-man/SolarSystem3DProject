@@ -31,7 +31,7 @@ add_library(imgui STATIC ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui
 target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(imgui PUBLIC glfw)
 add_executable(solar_system
-  src/main.cpp src/Application.cpp src/Audio.cpp src/SoundSynth.cpp src/UiTheme.cpp src/UiPanels.cpp src/QuizRandomizer.cpp src/BlackHole.cpp src/Shader.cpp src/Mesh.cpp src/Texture.cpp src/PostProcess.cpp)
+  src/main.cpp src/Application.cpp src/Audio.cpp src/SoundSynth.cpp src/Intro.cpp src/UiTheme.cpp src/UiPanels.cpp src/QuizRandomizer.cpp src/BlackHole.cpp src/Shader.cpp src/Mesh.cpp src/Texture.cpp src/PostProcess.cpp)
 target_include_directories(solar_system PRIVATE src ${stb_SOURCE_DIR})
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniaudio/miniaudio.h")
   target_include_directories(solar_system SYSTEM PRIVATE
