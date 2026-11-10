@@ -200,9 +200,12 @@ void applyStyle() {
     style.WindowPadding = ImVec2(16.0f * UiScale, 16.0f * UiScale);
     style.FramePadding = ImVec2(8.0f * UiScale, 6.0f * UiScale);
     style.ItemSpacing = ImVec2(8.0f * UiScale, 8.0f * UiScale);
-    style.WindowRounding = style.ChildRounding = style.FrameRounding = 0.0f;
-    style.PopupRounding = style.ScrollbarRounding = style.GrabRounding = 0.0f;
-    style.WindowBorderSize = style.ChildBorderSize = 0.0f;
+    style.WindowRounding = 16.0f * UiScale;
+    style.ChildRounding = 12.0f * UiScale;
+    style.FrameRounding = 10.0f * UiScale;
+    style.PopupRounding = style.ScrollbarRounding = style.GrabRounding = 8.0f * UiScale;
+    style.WindowBorderSize = 1.0f * DpiScale;
+    style.ChildBorderSize = 0.0f;
     style.FrameBorderSize = 0.0f;
     style.ScrollbarSize = 6.0f * DpiScale;
     style.Colors[ImGuiCol_WindowBg] = Background;
@@ -335,7 +338,7 @@ bool PrimaryButton(const char *label, ImVec2 size) {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Accent);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, Accent);
     ImGui::PushStyleColor(ImGuiCol_Text, NearBlack);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f * UiScale);
     const bool clicked = ImGui::Button(label, ImVec2(size.x < 0 ? size.x : size.x * UiScale,
                                                       size.y * UiScale));
     ImGui::PopStyleVar();
@@ -352,7 +355,7 @@ bool GhostButton(const char *label, ImVec2 size) {
     ImGui::PushStyleColor(ImGuiCol_Text, Accent);
     ImGui::PushStyleColor(ImGuiCol_Border, Hairline);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f * UiScale);
     const bool clicked = ImGui::Button(label, ImVec2(size.x < 0 ? size.x : size.x * UiScale,
                                                       size.y * UiScale));
     ImGui::PopStyleVar(2);

@@ -46,12 +46,13 @@ constexpr float kGalaxySpeed = 0.34f;
 constexpr float kMilkyWayCameraYawDeg = -90.0f; // Negative means left; tune this live.
 constexpr float kTrailSampleSeconds = 0.12f;
 constexpr std::size_t kTrailCapacity = 1200;
-constexpr bool kPanelOnRight = true;
-constexpr float kPanelWidthRatio = 0.288f;
-constexpr float kPanelMaxWidth = 380.0f;
-constexpr float kPanelMaxWindowFraction = 0.40f;
-constexpr float kPanelMinWidth = 300.0f;
 constexpr float kLensingDemoHoldSeconds = 7.0f;
+constexpr float kSidebarExpandedWidth = 150.0f;
+constexpr float kSidebarCollapsedWidth = 56.0f;
+constexpr float kSidebarFlyoutWidth = 320.0f;
+constexpr float kSidebarMargin = 12.0f;
+constexpr float kSidebarGap = 10.0f;
+constexpr float kHudMaxWidth = 620.0f;
 constexpr std::size_t ASTEROID_COUNT_HIGH = 4000;
 constexpr std::size_t ASTEROID_COUNT_LOW = 1800;
 // Three-radius clearances cross in this stylized system (8.0 > 6.95); use 1.5R margins.
@@ -59,10 +60,140 @@ constexpr float ASTEROID_BELT_INNER_RADIUS = 7.1f + 0.30f * 1.5f;
 constexpr float ASTEROID_BELT_OUTER_RADIUS = 9.5f - 0.85f * 1.5f;
 constexpr float ASTEROID_VERTICAL_SPREAD = 0.20f;
 
-float panelWidthForWindow(int logicalWindowWidth) {
-    const float windowWidth = std::max(0.0f, static_cast<float>(logicalWindowWidth));
-    const float maximum = std::min(kPanelMaxWidth, windowWidth * kPanelMaxWindowFraction);
-    return std::min(maximum, std::max(kPanelMinWidth, windowWidth * kPanelWidthRatio));
+struct SidebarLayout {
+    float sidebarX = 0.0f;
+    float sidebarY = 0.0f;
+    float sidebarWidth = 0.0f;
+    float panelHeight = 0.0f;
+    float flyoutX = 0.0f;
+    float flyoutWidth = 0.0f;
+    float hudWidth = 0.0f;
+    float hudHeight = 0.0f;
+};
+
+SidebarLayout sidebarLayoutForWindow(int logicalWidth, int logicalHeight, float scale,
+                                     bool collapsed, bool flyoutOpen) {
+    SidebarLayout layout;
+    const float windowWidth = std::max(0.0f, static_cast<float>(logicalWidth));
+    const float windowHeight = std::max(0.0f, static_cast<float>(logicalHeight));
+    const float uiScale = std::max(0.0f, scale);
+    const float margin = std::min(kSidebarMargin * uiScale, windowWidth * 0.02f);
+    const float maxOverlayWidth = std::min(std::max(0.0f, windowWidth - 2.0f * margin),
+                                           windowWidth * 0.55f);
+    const float sidebarTarget = (collapsed ? kSidebarCollapsedWidth : kSidebarExpandedWidth) * uiScale;
+    layout.sidebarWidth = std::min(sidebarTarget, maxOverlayWidth);
+    float gap = flyoutOpen ? std::min(kSidebarGap * uiScale,
+                                      std::max(0.0f, maxOverlayWidth - layout.sidebarWidth)) : 0.0f;
+    if (flyoutOpen) {
+        layout.flyoutWidth = std::min(kSidebarFlyoutWidth * uiScale,
+                                      std::max(0.0f, maxOverlayWidth - layout.sidebarWidth - gap));
+        if (layout.flyoutWidth <= 0.0f) gap = 0.0f;
+    }
+    layout.sidebarX = std::clamp(windowWidth - margin - layout.sidebarWidth, 0.0f,
+                                 std::max(0.0f, windowWidth - layout.sidebarWidth));
+    layout.flyoutX = std::max(0.0f, layout.sidebarX - gap - layout.flyoutWidth);
+    layout.panelHeight = std::max(0.0f, windowHeight - 2.0f *
+                                  std::min(kSidebarMargin * uiScale, windowHeight * 0.02f));
+    layout.sidebarY = std::max(0.0f, (windowHeight - layout.panelHeight) * 0.5f);
+    const float hudRight = flyoutOpen && layout.flyoutWidth > 0.0f
+                               ? layout.flyoutX : layout.sidebarX;
+    layout.hudWidth = std::min(kHudMaxWidth * uiScale,
+                               std::max(0.0f, hudRight - 2.0f * margin));
+    layout.hudHeight = std::min(windowHeight, 128.0f * uiScale);
+    return layout;
+}
+
+void drawSidebarIcon(ImDrawList *draw, ImVec2 center, float size, int icon, ImU32 color) {
+    const float u = size / 18.0f;
+    const float stroke = std::max(1.0f, u * 1.6f);
+    if (icon == 0) {
+        for (int row = 0; row < 2; ++row)
+            for (int col = 0; col < 2; ++col) {
+                const ImVec2 a(center.x + (col ? 1.5f : -6.5f) * u,
+                               center.y + (row ? 1.5f : -6.5f) * u);
+                draw->AddRect(a, ImVec2(a.x + 5.0f * u, a.y + 5.0f * u), color, 1.0f * u, 0, stroke);
+            }
+    } else if (icon == 1) {
+        draw->AddCircle(center, 7.0f * u, color, 0, stroke);
+        draw->AddLine(center, ImVec2(center.x, center.y - 4.0f * u), color, stroke);
+        draw->AddLine(center, ImVec2(center.x + 4.0f * u, center.y + 2.0f * u), color, stroke);
+    } else if (icon == 2) {
+        for (int row = -1; row <= 1; ++row) {
+            const float y = center.y + row * 5.5f * u;
+            draw->AddLine(ImVec2(center.x - 7.0f * u, y), ImVec2(center.x + 7.0f * u, y), color, stroke);
+            draw->AddCircleFilled(ImVec2(center.x + (row == 0 ? 2.0f : -2.0f) * u, y), 1.8f * u, color);
+        }
+    } else if (icon == 3) {
+        draw->AddLine(ImVec2(center.x - 5.0f * u, center.y + 7.0f * u),
+                      ImVec2(center.x - 5.0f * u, center.y - 7.0f * u), color, stroke);
+        draw->AddTriangleFilled(ImVec2(center.x - 4.0f * u, center.y - 7.0f * u),
+                                ImVec2(center.x + 7.0f * u, center.y - 4.0f * u),
+                                ImVec2(center.x - 4.0f * u, center.y), color);
+        draw->AddLine(ImVec2(center.x - 8.0f * u, center.y + 8.0f * u),
+                      ImVec2(center.x + 7.0f * u, center.y + 8.0f * u), color, stroke);
+    } else {
+        draw->AddCircle(center, 7.0f * u, color, 0, stroke);
+        draw->AddLine(ImVec2(center.x - 2.0f * u, center.y - 2.0f * u),
+                      ImVec2(center.x + 1.0f * u, center.y - 5.0f * u), color, stroke);
+        draw->AddLine(ImVec2(center.x + 1.0f * u, center.y - 5.0f * u),
+                      ImVec2(center.x + 4.0f * u, center.y - 2.0f * u), color, stroke);
+        draw->AddLine(ImVec2(center.x + 4.0f * u, center.y - 2.0f * u),
+                      ImVec2(center.x, center.y + 1.0f * u), color, stroke);
+        draw->AddCircleFilled(ImVec2(center.x, center.y + 4.5f * u), 0.9f * u, color);
+    }
+}
+
+bool drawSidebarItem(const char *id, const char *label, int icon, bool active,
+                     bool collapsed, float width, float height) {
+    width = std::max(0.0f, width);
+    height = std::max(0.0f, height);
+    const ImVec2 position = ImGui::GetCursorScreenPos();
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(width, height));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList *draw = ImGui::GetWindowDrawList();
+    if (active)
+        draw->AddRectFilled(position, ImVec2(position.x + width, position.y + height),
+                            ImGui::ColorConvertFloat4ToU32(UiTheme::Accent), 10.0f * UiTheme::UiScale);
+    else if (hovered)
+        draw->AddRectFilled(position, ImVec2(position.x + width, position.y + height),
+                            IM_COL32(255, 255, 255, 12), 10.0f * UiTheme::UiScale);
+    const ImU32 tint = ImGui::ColorConvertFloat4ToU32(active ? UiTheme::NearBlack : UiTheme::Secondary);
+    drawSidebarIcon(draw, ImVec2(position.x + height * 0.5f, position.y + height * 0.5f),
+                    std::min(18.0f * UiTheme::UiScale, height * 0.56f), icon, tint);
+    if (!collapsed) {
+        const ImVec2 textSize = ImGui::CalcTextSize(label);
+        draw->AddText(ImVec2(position.x + height + 5.0f * UiTheme::UiScale,
+                             position.y + (height - textSize.y) * 0.5f), tint, label);
+    } else if (hovered) {
+        ImGui::SetTooltip("%s", label);
+    }
+    return clicked;
+}
+
+void drawQuickIcon(ImDrawList *draw, ImVec2 center, float radius, int icon, ImU32 color) {
+    const float r = std::max(1.0f, radius * 0.48f);
+    const float stroke = std::max(1.0f, radius * 0.10f);
+    if (icon == 0) {
+        draw->AddLine(ImVec2(center.x - r, center.y), ImVec2(center.x + r, center.y), color, stroke);
+        draw->AddLine(ImVec2(center.x, center.y - r), ImVec2(center.x, center.y + r), color, stroke);
+        draw->AddLine(ImVec2(center.x - r * 0.7f, center.y - r * 0.7f),
+                      ImVec2(center.x + r * 0.7f, center.y + r * 0.7f), color, stroke);
+        draw->AddLine(ImVec2(center.x - r * 0.7f, center.y + r * 0.7f),
+                      ImVec2(center.x + r * 0.7f, center.y - r * 0.7f), color, stroke);
+    } else if (icon == 1) {
+        draw->AddCircle(center, r * 0.72f, color, 0, stroke);
+        draw->AddLine(ImVec2(center.x - r, center.y), ImVec2(center.x + r, center.y), color, stroke);
+    } else {
+        draw->AddTriangleFilled(ImVec2(center.x - r, center.y - r * 0.55f),
+                                ImVec2(center.x - r, center.y + r * 0.55f),
+                                ImVec2(center.x, center.y + r * 0.55f), color);
+        draw->AddLine(ImVec2(center.x, center.y - r * 0.55f),
+                      ImVec2(center.x, center.y + r * 0.55f), color, stroke);
+        draw->AddLine(ImVec2(center.x + r * 0.35f, center.y - r * 0.4f),
+                      ImVec2(center.x + r, center.y), color, stroke);
+        draw->AddLine(ImVec2(center.x + r, center.y),
+                      ImVec2(center.x + r * 0.35f, center.y + r * 0.4f), color, stroke);
+    }
 }
 
 float scrollDelta = 0.0f;
@@ -809,6 +940,8 @@ void Application::selectBody(int index) {
     if (fromOverview)
         overviewDistance = distance;
     selected = index;
+    sidebarSection = 0;
+    sidebarFlyoutOpen = true;
     factsExpanded = false;
     audio.playBlip();
     recordVisit(index);
@@ -1489,6 +1622,7 @@ void Application::input(float deltaTime) {
         lastNDown = glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS;
         lastPDown = glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS;
         lastF12Down = glfwGetKey(window, GLFW_KEY_F12) == GLFW_PRESS;
+        lastTabDown = glfwGetKey(window, GLFW_KEY_TAB) == GLFW_PRESS;
         lastEscapeDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
         lastLeftDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         return;
@@ -1574,6 +1708,10 @@ void Application::input(float deltaTime) {
     }
     lastYDown = keyY;
     const bool f12 = glfwGetKey(window, GLFW_KEY_F12) == GLFW_PRESS;
+    const bool tab = glfwGetKey(window, GLFW_KEY_TAB) == GLFW_PRESS;
+    if (tab && !lastTabDown)
+        sidebarCollapsed = !sidebarCollapsed;
+    lastTabDown = tab;
     if (g && !lastGDown) {
         bloom = !bloom;
         std::cout << "Bloom: " << (bloom ? "ON" : "OFF") << '\n';
@@ -1651,10 +1789,18 @@ void Application::input(float deltaTime) {
     bool overUi = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
     double x = 0, y = 0;
     glfwGetCursorPos(window, &x, &y);
-    const float panelWidth = panelWidthForWindow(windowWidth);
-    const float panelLeft = kPanelOnRight ? static_cast<float>(windowWidth) - panelWidth : 0.0f;
-    overUi = overUi || (x >= panelLeft && x <= panelLeft + panelWidth && y >= 0.0 &&
-                        y < static_cast<double>(windowHeight));
+    const SidebarLayout layout = sidebarLayoutForWindow(windowWidth, windowHeight, UiTheme::UiScale,
+                                                         sidebarCollapsed, sidebarFlyoutOpen);
+    const bool overSidebar = x >= layout.sidebarX && x <= layout.sidebarX + layout.sidebarWidth &&
+                             y >= layout.sidebarY && y <= layout.sidebarY + layout.panelHeight;
+    const bool overFlyout = sidebarFlyoutOpen && layout.flyoutWidth > 0.0f &&
+                            x >= layout.flyoutX && x <= layout.flyoutX + layout.flyoutWidth &&
+                            y >= layout.sidebarY && y <= layout.sidebarY + layout.panelHeight;
+    const float hudLeft = std::min(kSidebarMargin * UiTheme::UiScale,
+                                   static_cast<float>(windowWidth) * 0.02f);
+    const bool overHud = x >= hudLeft && x <= hudLeft + layout.hudWidth &&
+                         y >= hudLeft && y <= hudLeft + layout.hudHeight;
+    overUi = overUi || overSidebar || overFlyout || overHud;
     overUi = overUi || help || quizOpen || (gameState == GameState::FreeExplore && blackHole.isSunSwallowed() &&
                                 !freeExploreSwallowedDismissed);
     const bool right = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
@@ -1958,70 +2104,200 @@ void Application::run() {
             intro.draw(static_cast<float>(windowWidth), static_cast<float>(windowHeight),
                        UiTheme::DpiScale);
         } else {
+        const SidebarLayout sidebarLayout = sidebarLayoutForWindow(
+            windowWidth, windowHeight, UiTheme::UiScale, sidebarCollapsed, sidebarFlyoutOpen);
         ImDrawList *hud = ImGui::GetForegroundDrawList();
         ImFont *readoutFont = UiTheme::SmallDataFont ? UiTheme::SmallDataFont : ImGui::GetFont();
         const float readoutSize = readoutFont->FontSize;
-        const ImU32 readoutColor = ImGui::ColorConvertFloat4ToU32(UiTheme::Secondary);
-        const float hudX = 16.0f * UiTheme::UiScale;
-        const float hudY = 14.0f * UiTheme::UiScale;
-        hud->AddText(readoutFont, readoutSize, ImVec2(hudX, hudY), readoutColor, "SOLAR SYSTEM 3D");
-        char clockText[80];
-        std::snprintf(clockText, sizeof(clockText), "SIMULATION  T+ %.3f DAYS",
-                      simTime / 86400.0f);
-        hud->AddText(readoutFont, readoutSize, ImVec2(hudX, hudY + readoutSize + 4.0f * UiTheme::UiScale),
-                     readoutColor, clockText);
-        if (lensingDemoActive) {
-            const ImU32 demoColor = ImGui::ColorConvertFloat4ToU32(UiTheme::Accent);
-            hud->AddText(readoutFont, readoutSize,
-                         ImVec2(hudX, hudY + 2.0f * (readoutSize + 4.0f * UiTheme::UiScale)),
-                         demoColor, "LENSING DEMO  |  ANY KEY TO SKIP");
+        const float hudPadding = 10.0f * UiTheme::UiScale;
+        const float hudLeft = std::min(kSidebarMargin * UiTheme::UiScale,
+                                       static_cast<float>(windowWidth) * 0.02f);
+        const float hudTop = std::min(kSidebarMargin * UiTheme::UiScale,
+                                      static_cast<float>(windowHeight) * 0.02f);
+        const float hudTextWidth = std::max(0.0f, sidebarLayout.hudWidth - 2.0f * hudPadding);
+        std::string teamLine = "TEAM  ";
+        for (std::size_t i = 0; i < UiTheme::kTeamMembers.size(); ++i) {
+            if (i != 0) teamLine += "  ·  ";
+            teamLine += UiTheme::kTeamMembers[i];
         }
-        if (windowWidth >= 1100) {
-            char cameraText[128], performanceText[80];
-            std::snprintf(cameraText, sizeof(cameraText), "CAM  AZ %5.1f°  EL %4.1f°  DIST %4.1f",
-                          yaw * 57.2957795f, pitch * 57.2957795f, distance);
-            std::snprintf(performanceText, sizeof(performanceText), "FPS %3.0f  Q %s",
-                          ImGui::GetIO().Framerate, highQuality ? "HIGH" : "LOW");
-            const float bottomY = static_cast<float>(windowHeight) - 2.0f * readoutSize - 22.0f * UiTheme::UiScale;
-            hud->AddText(readoutFont, readoutSize, ImVec2(hudX, bottomY), readoutColor, cameraText);
-            hud->AddText(readoutFont, readoutSize, ImVec2(hudX, bottomY + readoutSize + 4.0f * UiTheme::UiScale),
-                         readoutColor, performanceText);
+        const char *modeLabel = gameState == GameState::StartScreen ? "READY" :
+            gameState == GameState::Mission ? "MISSION" : gameState == GameState::FreeExplore ? "FREE EXPLORE" :
+            gameState == GameState::Won ? "MISSION COMPLETE" : "MISSION ENDED";
+        char statusLine[96], toggleLineOne[96], toggleLineTwo[96];
+        std::snprintf(statusLine, sizeof(statusLine), "MODE  %s   ·   SCORE  %d / %d",
+                      modeLabel, missionScore, MISSION_TARGET_SCORE);
+        std::snprintf(toggleLineOne, sizeof(toggleLineOne), "G %s   L %s   I %s   M %s",
+                      bloom ? "ON" : "OFF", lensing ? "ON" : "OFF",
+                      instancing ? "ON" : "OFF", meteorsEnabled ? "ON" : "OFF");
+        std::snprintf(toggleLineTwo, sizeof(toggleLineTwo), "N %s   P %s   Q %s",
+                      cityMarkersEnabled ? "ON" : "OFF", mapPanelOpen ? "ON" : "OFF",
+                      highQuality ? "HIGH" : "LOW");
+        const char *hudLines[] = {"EVENT HORIZON: SOLAR SYSTEM EXPLORER", teamLine.c_str(),
+                                  statusLine, toggleLineOne, toggleLineTwo};
+        ImVec2 hudLineSizes[5];
+        float hudHeight = 2.0f * hudPadding;
+        for (int i = 0; i < 5; ++i) {
+            hudLineSizes[i] = readoutFont->CalcTextSizeA(readoutSize, FLT_MAX, hudTextWidth, hudLines[i]);
+            hudHeight += hudLineSizes[i].y + 3.0f * UiTheme::UiScale;
+        }
+        if (sidebarLayout.hudWidth > 0.0f && windowHeight > 0) {
+            const ImVec2 hudMin(hudLeft, hudTop);
+            const ImVec2 hudMax(hudLeft + sidebarLayout.hudWidth, hudTop + hudHeight);
+            const ImU32 hudBackground = ImGui::ColorConvertFloat4ToU32(UiTheme::Background);
+            const ImU32 hudBorder = ImGui::ColorConvertFloat4ToU32(UiTheme::Hairline);
+            hud->AddRectFilled(hudMin, hudMax, hudBackground, 14.0f * UiTheme::UiScale);
+            hud->AddRect(hudMin, hudMax, hudBorder, 14.0f * UiTheme::UiScale, 0,
+                         1.0f / UiTheme::DpiScale);
+            float lineY = hudTop + hudPadding;
+            const ImU32 titleColor = ImGui::ColorConvertFloat4ToU32(UiTheme::PanelText);
+            const ImU32 infoColor = ImGui::ColorConvertFloat4ToU32(UiTheme::Secondary);
+            for (int i = 0; i < 5; ++i) {
+                hud->AddText(readoutFont, readoutSize, ImVec2(hudLeft + hudPadding, lineY),
+                             i == 0 ? titleColor : infoColor, hudLines[i], nullptr,
+                             hudTextWidth);
+                lineY += hudLineSizes[i].y + 3.0f * UiTheme::UiScale;
+            }
+            if (lensingDemoActive) {
+                const float demoY = hudTop + hudHeight + 5.0f * UiTheme::UiScale;
+                const ImVec2 demoSize = readoutFont->CalcTextSizeA(readoutSize, FLT_MAX,
+                    hudTextWidth, "LENSING DEMO  |  ANY KEY TO SKIP");
+                hud->AddRectFilled(ImVec2(hudLeft, demoY - 4.0f * UiTheme::UiScale),
+                    ImVec2(hudLeft + sidebarLayout.hudWidth, demoY + demoSize.y + 4.0f * UiTheme::UiScale),
+                    hudBackground, 10.0f * UiTheme::UiScale);
+                hud->AddText(readoutFont, readoutSize, ImVec2(hudLeft + hudPadding, demoY),
+                    ImGui::ColorConvertFloat4ToU32(UiTheme::Accent),
+                    "LENSING DEMO  |  ANY KEY TO SKIP", nullptr, hudTextWidth);
+            }
         }
         drawCityLabels(view, projection);
         drawCityLabels(view, projection);
-        const float panelWidth = panelWidthForWindow(windowWidth);
-        ImGui::SetNextWindowPos(ImVec2(kPanelOnRight ? static_cast<float>(windowWidth) - panelWidth : 0.0f, 0), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(panelWidth, static_cast<float>(windowHeight)), ImGuiCond_Always);
+        const ImGuiWindowFlags sidebarFlags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+        ImGui::SetNextWindowPos(ImVec2(sidebarLayout.sidebarX, sidebarLayout.sidebarY), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(sidebarLayout.sidebarWidth, sidebarLayout.panelHeight), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(UiTheme::Background.w);
-        ImGui::Begin("Mission Control", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings);
-        UiTheme::header();
-        const std::string fixedTeam = "TEAM  " + UiTheme::teamCredit().substr(4);
-        ImGui::TextWrapped("%s", fixedTeam.c_str());
-        ImGui::TextWrapped("TOPIC  EVENT HORIZON: SOLAR SYSTEM EXPLORER");
-        const char *fixedStatus = gameState == GameState::StartScreen ? "READY" :
-            gameState == GameState::Mission ? "ACTIVE" : gameState == GameState::FreeExplore ? "FREE EXPLORE" :
-            gameState == GameState::Won ? "COMPLETE" : "ENDED";
-        if (UiTheme::DataFont) ImGui::PushFont(UiTheme::DataFont);
-        ImGui::TextWrapped("%s  |  SCORE %d / %d", fixedStatus, missionScore, MISSION_TARGET_SCORE);
-        if (UiTheme::DataFont) ImGui::PopFont();
-        char fixedToggles[192];
-        std::snprintf(fixedToggles, sizeof(fixedToggles), "G %s · L %s · I %s · M %s · N %s · P %s · Q %s",
-            bloom ? "ON" : "OFF", lensing ? "ON" : "OFF", instancing ? "ON" : "OFF",
-            meteorsEnabled ? "ON" : "OFF", cityMarkersEnabled ? "ON" : "OFF", mapPanelOpen ? "ON" : "OFF",
-            highQuality ? "HIGH" : "LOW");
-        if (UiTheme::LabelFont) ImGui::PushFont(UiTheme::LabelFont);
-        ImGui::TextWrapped("%s", fixedToggles);
-        if (UiTheme::LabelFont) ImGui::PopFont();
-        ImGui::TextWrapped("VIEW %s · SOUND %s · BLACK HOLE %s",
-            galaxyViewTarget ? "MILKY WAY" : "SOLAR SYSTEM",
-            !audio.available() ? "UNAVAILABLE" : audio.muted() ? "MUTED" : "ON",
-            blackHole.getStateName());
-        UiTheme::HairlineRule();
-        ImGui::BeginChild("panel_content", ImVec2(0, 0), false);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                            ImVec2((sidebarCollapsed ? 4.0f : 9.0f) * UiTheme::UiScale,
+                                   9.0f * UiTheme::UiScale));
+        if (ImGui::Begin("Solar Sidebar", nullptr, sidebarFlags)) {
+            if (!sidebarCollapsed) {
+                ImGui::TextColored(UiTheme::Secondary, "NAVIGATION");
+                ImGui::Spacing();
+            } else {
+                ImGui::Dummy(ImVec2(0, 2.0f * UiTheme::UiScale));
+            }
+            const float footerHeight = 76.0f * UiTheme::UiScale;
+            const float navHeight = std::max(0.0f, ImGui::GetContentRegionAvail().y - footerHeight);
+            ImGui::BeginChild("sidebar_items", ImVec2(0, navHeight), false);
+            const char *navLabels[] = {"OVERVIEW", "SIMULATION", "INSTRUMENTS", "MISSION", "CONTROLS"};
+            for (int i = 0; i < 5; ++i) {
+                if (drawSidebarItem(navLabels[i], navLabels[i], i,
+                                    sidebarFlyoutOpen && sidebarSection == i,
+                                    sidebarCollapsed, ImGui::GetContentRegionAvail().x,
+                                    42.0f * UiTheme::UiScale)) {
+                    if (sidebarFlyoutOpen && sidebarSection == i) {
+                        sidebarFlyoutOpen = false;
+                        sidebarSection = -1;
+                    } else {
+                        sidebarSection = i;
+                        sidebarFlyoutOpen = true;
+                    }
+                }
+                ImGui::Dummy(ImVec2(0, 3.0f * UiTheme::UiScale));
+            }
+            ImGui::EndChild();
+            const float collapseHeight = 34.0f * UiTheme::UiScale;
+            const ImVec2 collapsePosition = ImGui::GetCursorScreenPos();
+            const float collapseWidth = std::max(0.0f, ImGui::GetContentRegionAvail().x);
+            const bool collapseClicked = ImGui::InvisibleButton("sidebar_collapse",
+                ImVec2(collapseWidth, collapseHeight));
+            const bool collapseHovered = ImGui::IsItemHovered();
+            ImDrawList *sidebarDraw = ImGui::GetWindowDrawList();
+            if (collapseHovered)
+                sidebarDraw->AddRectFilled(collapsePosition,
+                    ImVec2(collapsePosition.x + collapseWidth, collapsePosition.y + collapseHeight),
+                    IM_COL32(255, 255, 255, 12), 9.0f * UiTheme::UiScale);
+            const float arrowX = collapsePosition.x + collapseHeight * 0.5f;
+            const float arrowY = collapsePosition.y + collapseHeight * 0.5f;
+            const float arrowDirection = sidebarCollapsed ? -1.0f : 1.0f;
+            const ImU32 arrowColor = ImGui::ColorConvertFloat4ToU32(UiTheme::Secondary);
+            sidebarDraw->AddLine(ImVec2(arrowX - arrowDirection * 3.0f * UiTheme::UiScale,
+                                        arrowY - 5.0f * UiTheme::UiScale),
+                                 ImVec2(arrowX + arrowDirection * 3.0f * UiTheme::UiScale, arrowY),
+                                 arrowColor, 1.6f * UiTheme::UiScale);
+            sidebarDraw->AddLine(ImVec2(arrowX + arrowDirection * 3.0f * UiTheme::UiScale, arrowY),
+                                 ImVec2(arrowX - arrowDirection * 3.0f * UiTheme::UiScale,
+                                        arrowY + 5.0f * UiTheme::UiScale),
+                                 arrowColor, 1.6f * UiTheme::UiScale);
+            if (!sidebarCollapsed) {
+                ImFont *collapseFont = UiTheme::LabelFont ? UiTheme::LabelFont : ImGui::GetFont();
+                const float collapseFontSize = collapseFont->FontSize;
+                sidebarDraw->AddText(collapseFont, collapseFontSize,
+                    ImVec2(arrowX + 13.0f * UiTheme::UiScale,
+                    collapsePosition.y + (collapseHeight - collapseFontSize) * 0.5f), arrowColor,
+                    "Collapse sidebar");
+            } else if (collapseHovered) {
+                ImGui::SetTooltip("Expand sidebar");
+            }
+            if (collapseClicked) sidebarCollapsed = !sidebarCollapsed;
+            const float quickGap = 2.0f * UiTheme::UiScale;
+            const float quickWidth = std::max(0.0f, ImGui::GetContentRegionAvail().x);
+            const float quickDiameter = std::min(24.0f * UiTheme::UiScale,
+                std::max(0.0f, (quickWidth - 2.0f * quickGap) / 3.0f));
+            const char *quickNames[] = {"Bloom (G)", "Lensing (L)", "Mute ambience (K)"};
+            for (int i = 0; i < 3 && quickDiameter > 0.0f; ++i) {
+                if (i != 0) ImGui::SameLine(0, quickGap);
+                const ImVec2 quickPosition = ImGui::GetCursorScreenPos();
+                const bool quickClicked = ImGui::InvisibleButton(quickNames[i],
+                    ImVec2(quickDiameter, quickDiameter));
+                const bool quickHovered = ImGui::IsItemHovered();
+                const bool active = i == 0 ? bloom : i == 1 ? lensing : !audio.muted();
+                const ImVec2 center(quickPosition.x + quickDiameter * 0.5f,
+                                    quickPosition.y + quickDiameter * 0.5f);
+                const float radius = quickDiameter * 0.5f;
+                sidebarDraw->AddCircleFilled(center, radius,
+                    ImGui::ColorConvertFloat4ToU32(active ? UiTheme::Accent : UiTheme::Background));
+                sidebarDraw->AddCircle(center, radius, ImGui::ColorConvertFloat4ToU32(UiTheme::Hairline),
+                                       0, 1.0f / UiTheme::DpiScale);
+                drawQuickIcon(sidebarDraw, center, radius,
+                    i, ImGui::ColorConvertFloat4ToU32(active ? UiTheme::NearBlack : UiTheme::Secondary));
+                if (quickHovered) ImGui::SetTooltip("%s", quickNames[i]);
+                if (quickClicked) {
+                    if (i == 0) bloom = !bloom;
+                    else if (i == 1) lensing = !lensing;
+                    else audio.toggleMute();
+                }
+            }
+        }
+        ImGui::End();
+        ImGui::PopStyleVar();
+
+        if (sidebarFlyoutOpen && sidebarLayout.flyoutWidth > 0.0f) {
+            ImGui::SetNextWindowPos(ImVec2(sidebarLayout.flyoutX, sidebarLayout.sidebarY), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(sidebarLayout.flyoutWidth, sidebarLayout.panelHeight), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(UiTheme::Background.w);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                                ImVec2(14.0f * UiTheme::UiScale, 12.0f * UiTheme::UiScale));
+            if (ImGui::Begin("Sidebar Flyout", nullptr, sidebarFlags)) {
+                const char *flyoutTitle = sidebarSection == 0 ? "OVERVIEW" :
+                    sidebarSection == 1 ? "SIMULATION" : sidebarSection == 2 ? "INSTRUMENTS" :
+                    sidebarSection == 3 ? "MISSION" : "CONTROLS";
+                ImGui::TextColored(UiTheme::Accent, "%s", flyoutTitle);
+                const float closeX = std::max(ImGui::GetCursorPosX(),
+                    ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - 28.0f * UiTheme::UiScale);
+                ImGui::SameLine(closeX);
+                if (UiTheme::GhostButton("×", ImVec2(24, 24))) {
+                    sidebarFlyoutOpen = false;
+                    sidebarSection = -1;
+                }
+                UiTheme::HairlineRule();
+                ImGui::BeginChild("panel_content", ImVec2(0, 0), false);
+        if (sidebarSection == 0) {
         UiTheme::SectionHeader("01", "OBJECT");
         auto drawWorldRow = [&](const char *name, const char *distanceText, const char *index, bool isSelected, auto onClick) {
-            const float h = 30.0f * UiTheme::UiScale, w = ImGui::GetContentRegionAvail().x;
+            const float h = 30.0f * UiTheme::UiScale;
+            const float w = std::max(0.0f, ImGui::GetContentRegionAvail().x);
             const ImVec2 p = ImGui::GetCursorScreenPos();
             const bool clicked = ImGui::InvisibleButton(name, ImVec2(w, h));
             ImDrawList *dl = ImGui::GetWindowDrawList();
@@ -2179,6 +2455,8 @@ void Application::run() {
             }
             if (UiTheme::PrimaryButton("START QUIZ")) beginQuiz();
         }
+        }
+        if (sidebarSection == 1) {
         UiTheme::SectionHeader("02","SIMULATION");
         char days[48];std::snprintf(days,sizeof(days),"%.3f",simTime/86400.0);
         UiTheme::LabelValueRow("TIME",days,"days · stylised");
@@ -2209,6 +2487,8 @@ void Application::run() {
         ImGui::PopStyleVar();
         if (UiTheme::LabelFont) ImGui::PopFont();
         ImGui::EndDisabled();
+        }
+        if (sidebarSection == 2) {
         UiTheme::SectionHeader("03","INSTRUMENTS");
         if(UiTheme::ToggleRow("BLOOM","G",bloom))bloom=!bloom;
         if(UiTheme::ToggleRow("LENSING","L",lensing))lensing=!lensing;
@@ -2230,7 +2510,8 @@ void Application::run() {
         ImGui::PushTextWrapPos();
         ImGui::TextColored(danger?UiTheme::Alert:UiTheme::Secondary,"BLACK HOLE  %s  %.0f%%",holeState,blackHole.getThreatProgress()*100);
         ImGui::PopTextWrapPos();
-        const float holeButtonWidth=(ImGui::GetContentRegionAvail().x/UiTheme::UiScale-4.0f)*0.5f;
+        const float holeButtonWidth=std::max(0.0f,
+            (ImGui::GetContentRegionAvail().x/UiTheme::UiScale-4.0f)*0.5f);
         if(UiTheme::GhostButton("SUMMON [B]",ImVec2(holeButtonWidth,27))&&gameplayActive&&blackHole.isIdle()){
             if(galaxyViewTarget)setGalaxyViewTarget(false);freeExploreSwallowedDismissed=false;blackHole.summon();
         }
@@ -2242,10 +2523,11 @@ void Application::run() {
         ImGui::TextColored(UiTheme::Secondary,"SOUND");
         if(audio.available()){
             ImGui::PushID("master_volume_track");
-            const ImVec2 p=ImGui::GetCursorScreenPos();const float w=ImGui::GetContentRegionAvail().x;
+            const ImVec2 p=ImGui::GetCursorScreenPos();
+            const float w=std::max(0.0f, ImGui::GetContentRegionAvail().x);
             const float y=p.y+6*UiTheme::DpiScale;
             ImGui::InvisibleButton("track",ImVec2(w,14*UiTheme::DpiScale));
-            if(ImGui::IsItemActive())audio.setMaster(std::clamp((ImGui::GetIO().MousePos.x-p.x)/w,0.0f,1.0f));
+            if(ImGui::IsItemActive()&&w>0.0f)audio.setMaster(std::clamp((ImGui::GetIO().MousePos.x-p.x)/w,0.0f,1.0f));
             const float fill=audio.master()*w;ImDrawList *dl=ImGui::GetWindowDrawList();
             dl->AddLine(ImVec2(p.x,y),ImVec2(p.x+w,y),ImGui::ColorConvertFloat4ToU32(UiTheme::Hairline),1/UiTheme::DpiScale);
             dl->AddLine(ImVec2(p.x,y),ImVec2(p.x+fill,y),ImGui::ColorConvertFloat4ToU32(UiTheme::Accent),2/UiTheme::DpiScale);
@@ -2253,15 +2535,14 @@ void Application::run() {
             ImGui::PopID();
         }else ImGui::TextDisabled("%s",audio.status());
         if(UiTheme::ToggleRow("MUTE","K",audio.muted()))audio.toggleMute();
+        }
+        if (sidebarSection == 3) {
         UiTheme::SectionHeader("04","MISSION");
         ImGui::TextColored(UiTheme::Secondary,"STATUS");ImGui::SameLine();
         ImGui::TextColored(UiTheme::PanelText,"%s",gameState==GameState::StartScreen?"READY":gameState==GameState::Mission?"ACTIVE":gameState==GameState::FreeExplore?"FREE EXPLORE":gameState==GameState::Won?"COMPLETE":"ENDED");
         if(UiTheme::HeroFont)ImGui::PushFont(UiTheme::HeroFont);
         ImGui::Text("SCORE  %d / %d",missionScore,MISSION_TARGET_SCORE);
         if(UiTheme::HeroFont)ImGui::PopFont();
-        const std::string team="TEAM  "+UiTheme::teamCredit().substr(4);
-        ImGui::TextWrapped("%s",team.c_str());
-        ImGui::TextWrapped("TOPIC  EVENT HORIZON: SOLAR SYSTEM EXPLORER");
         if(gameState==GameState::Mission){
             char threat[32];std::snprintf(threat,sizeof(threat),"%.1f",activeThreat().getThreatProgress()*100.0f);
             UiTheme::LabelValueRow("THREAT",threat,"%");
@@ -2269,12 +2550,21 @@ void Application::run() {
         if(gameState==GameState::StartScreen){
             if(UiTheme::PrimaryButton("START MISSION"))startMission();
             if(UiTheme::GhostButton("FREE EXPLORE"))startFreeExplore();
+        } else if(gameState==GameState::FreeExplore){
+            if(UiTheme::GhostButton("RESTART FREE EXPLORE"))startFreeExplore();
+        } else {
+            if(UiTheme::GhostButton("RESTART MISSION"))startMission();
         }
-        if (UiTheme::GhostButton(controlsOpen ? "HIDE CONTROLS" : "CONTROLS", ImVec2(-1, 28)))
-            controlsOpen = !controlsOpen;
-        if (controlsOpen) UiPanels::controlsList();
+        }
+        if (sidebarSection == 4) {
+            UiTheme::SectionHeader("05", "CONTROLS");
+            UiPanels::controlsList();
+        }
         ImGui::EndChild();
-        ImGui::End();
+            }
+            ImGui::End();
+            ImGui::PopStyleVar();
+        }
         if (help) {
             UiPanels::beginCenteredCard("Controls",static_cast<float>(windowWidth),static_cast<float>(windowHeight),560,520);
             UiTheme::SectionHeader("","CONTROLS");

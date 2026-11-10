@@ -174,6 +174,10 @@ private:
     bool paused = false;
     bool help = false;
     bool controlsOpen = false;
+    bool sidebarCollapsed = false;
+    bool sidebarFlyoutOpen = true;
+    bool lastTabDown = false;
+    int sidebarSection = 0;
     bool freeFly = false;
     bool flying = false;
     bool quizOpen = false;

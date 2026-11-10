@@ -12,7 +12,7 @@ void beginCenteredCard(const char *name, float windowWidth, float windowHeight,
     ImGui::SetNextWindowSize(ImVec2(cardWidth * UiTheme::DpiScale,
                                     cardHeight * UiTheme::DpiScale), ImGuiCond_Always);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, UiTheme::Background);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16.0f * UiTheme::UiScale);
     ImGui::Begin(name, open, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
                                     ImGuiWindowFlags_NoSavedSettings);
@@ -22,7 +22,7 @@ void beginCenteredCard(const char *name, float windowWidth, float windowHeight,
     auto snap = [dpi](float value) { return std::round(value * dpi) / dpi + 0.5f / dpi; };
     ImGui::GetWindowDrawList()->AddRect(ImVec2(snap(p.x), snap(p.y)),
         ImVec2(snap(p.x + size.x), snap(p.y + size.y)),
-        ImGui::ColorConvertFloat4ToU32(UiTheme::Hairline), 0.0f, 0, 1.0f / UiTheme::DpiScale);
+        ImGui::ColorConvertFloat4ToU32(UiTheme::Hairline), 16.0f * UiTheme::UiScale, 0, 1.0f / UiTheme::DpiScale);
 }
 
 void endCenteredCard() {
