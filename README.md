@@ -1,6 +1,6 @@
 # Event Horizon: Solar System Explorer
 
-A C++17 / OpenGL 3.3 Core university graphics project. The scene includes a procedural starfield and colourful direction-based nebula background, so no sky image asset is needed. An optional equirectangular sky texture can be placed at `assets/textures/stars_milky_way.jpg`.
+A C++17 / OpenGL 3.3 Core university graphics project. Without the optional `assets/textures/stars_milky_way.jpg` panorama, the sky uses a procedural, direction-based nebula with clumped gas, dust lanes, and layered depth; no image asset is required.
 
 ## Build and run (Windows 10/11, VS2022)
 
