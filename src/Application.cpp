@@ -48,12 +48,23 @@ constexpr float kMilkyWayCameraYawDeg = -90.0f; // Negative means left; tune thi
 constexpr float kTrailSampleSeconds = 0.12f;
 constexpr std::size_t kTrailCapacity = 1200;
 constexpr bool kPanelOnRight = true;
+constexpr float kPanelWidthRatio = 0.288f;
+constexpr float kPanelMaxWidth = 380.0f;
+constexpr float kPanelMaxWindowFraction = 0.40f;
+constexpr float kPanelMinWidth = 300.0f;
 constexpr std::size_t ASTEROID_COUNT_HIGH = 4000;
 constexpr std::size_t ASTEROID_COUNT_LOW = 1800;
 // Three-radius clearances cross in this stylized system (8.0 > 6.95); use 1.5R margins.
 constexpr float ASTEROID_BELT_INNER_RADIUS = 7.1f + 0.30f * 1.5f;
 constexpr float ASTEROID_BELT_OUTER_RADIUS = 9.5f - 0.85f * 1.5f;
 constexpr float ASTEROID_VERTICAL_SPREAD = 0.20f;
+
+float panelWidthForWindow(int logicalWindowWidth) {
+    const float windowWidth = std::max(0.0f, static_cast<float>(logicalWindowWidth));
+    const float maximum = std::min(kPanelMaxWidth, windowWidth * kPanelMaxWindowFraction);
+    return std::min(maximum, std::max(kPanelMinWidth, windowWidth * kPanelWidthRatio));
+}
+
 float scrollDelta = 0.0f;
 void scrollCallback(GLFWwindow *, double, double y) {
     scrollDelta += static_cast<float>(y);
@@ -1616,9 +1627,7 @@ void Application::input(float deltaTime) {
     bool overUi = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
     double x = 0, y = 0;
     glfwGetCursorPos(window, &x, &y);
-    const float panelMax = std::min(380.0f, static_cast<float>(windowWidth) * 0.40f);
-    const float panelWidth = std::min(panelMax,
-        std::max(300.0f, static_cast<float>(windowWidth) * 0.24f));
+    const float panelWidth = panelWidthForWindow(windowWidth);
     const float panelLeft = kPanelOnRight ? static_cast<float>(windowWidth) - panelWidth : 0.0f;
     overUi = overUi || (x >= panelLeft && x <= panelLeft + panelWidth && y >= 0.0 &&
                         y < static_cast<double>(windowHeight));
@@ -1936,8 +1945,7 @@ void Application::run() {
         }
         drawCityLabels(view, projection);
         drawCityLabels(view, projection);
-        const float maxPanelWidth = std::min(380.0f, static_cast<float>(windowWidth) * 0.40f);
-        const float panelWidth = std::min(maxPanelWidth, std::max(300.0f, static_cast<float>(windowWidth) * 0.24f));
+        const float panelWidth = panelWidthForWindow(windowWidth);
         ImGui::SetNextWindowPos(ImVec2(kPanelOnRight ? static_cast<float>(windowWidth) - panelWidth : 0.0f, 0), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(panelWidth, static_cast<float>(windowHeight)), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(UiTheme::Background.w);
@@ -1945,13 +1953,13 @@ void Application::run() {
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings);
         UiTheme::header();
         const std::string fixedTeam = "TEAM  " + UiTheme::teamCredit().substr(4);
-        ImGui::TextColored(UiTheme::Secondary, "%s", fixedTeam.c_str());
+        ImGui::TextWrapped("%s", fixedTeam.c_str());
         ImGui::TextWrapped("TOPIC  EVENT HORIZON: SOLAR SYSTEM EXPLORER");
         const char *fixedStatus = gameState == GameState::StartScreen ? "READY" :
             gameState == GameState::Mission ? "ACTIVE" : gameState == GameState::FreeExplore ? "FREE EXPLORE" :
             gameState == GameState::Won ? "COMPLETE" : "ENDED";
         if (UiTheme::DataFont) ImGui::PushFont(UiTheme::DataFont);
-        ImGui::Text("%s  |  SCORE %d / %d", fixedStatus, missionScore, MISSION_TARGET_SCORE);
+        ImGui::TextWrapped("%s  |  SCORE %d / %d", fixedStatus, missionScore, MISSION_TARGET_SCORE);
         if (UiTheme::DataFont) ImGui::PopFont();
         char fixedToggles[192];
         std::snprintf(fixedToggles, sizeof(fixedToggles), "G %s · L %s · I %s · M %s · N %s · P %s · Q %s",
@@ -2140,13 +2148,22 @@ void Application::run() {
         if(UiTheme::GhostButton(paused?"RESUME [SPACE]":"PAUSE [SPACE]",ImVec2(150,28)))paused=!paused;
         ImGui::TextColored(UiTheme::Secondary,"VIEW");
         const bool canChangeView=gameState==GameState::FreeExplore&&blackHole.isIdle();
-        const float viewButtonWidth=(ImGui::GetContentRegionAvail().x/UiTheme::UiScale-4.0f)*0.5f;
         ImGui::BeginDisabled(!canChangeView);
-        if(!galaxyViewTarget)ImGui::TextColored(UiTheme::Accent,"SOLAR SYSTEM");
-        else if(UiTheme::GhostButton("SOLAR SYSTEM",ImVec2(viewButtonWidth,27)))setGalaxyViewTarget(false);
-        ImGui::SameLine(0,4*UiTheme::UiScale);
-        if(galaxyViewTarget)ImGui::TextColored(UiTheme::Accent,"MILKY WAY");
-        else if(UiTheme::GhostButton("MILKY WAY",ImVec2(viewButtonWidth,27)))setGalaxyViewTarget(true);
+        if (UiTheme::LabelFont) ImGui::PushFont(UiTheme::LabelFont);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * UiTheme::UiScale,
+                                                               6.0f * UiTheme::UiScale));
+        if (ImGui::BeginTable("view_switch", 2, ImGuiTableFlags_SizingStretchSame |
+                              ImGuiTableFlags_NoSavedSettings)) {
+            ImGui::TableNextColumn();
+            if (!galaxyViewTarget) ImGui::TextColored(UiTheme::Accent, "SOLAR SYSTEM");
+            else if (UiTheme::GhostButton("SOLAR SYSTEM", ImVec2(-1, 27))) setGalaxyViewTarget(false);
+            ImGui::TableNextColumn();
+            if (galaxyViewTarget) ImGui::TextColored(UiTheme::Accent, "MILKY WAY");
+            else if (UiTheme::GhostButton("MILKY WAY", ImVec2(-1, 27))) setGalaxyViewTarget(true);
+            ImGui::EndTable();
+        }
+        ImGui::PopStyleVar();
+        if (UiTheme::LabelFont) ImGui::PopFont();
         ImGui::EndDisabled();
         UiTheme::SectionHeader("03","INSTRUMENTS");
         if(UiTheme::ToggleRow("BLOOM","G",bloom))bloom=!bloom;
