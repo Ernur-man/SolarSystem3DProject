@@ -37,11 +37,23 @@ World ambience is synthesized in C++ at startup, so the game needs no audio asse
 - The F1 help also notes that optional planet maps have procedural fallbacks and Earth has a rendered Moon.
 - Earth map mode includes 50 offline city markers, lat/lon picking, and a pannable, zoomable equirectangular map. Without `assets/textures/earth_day.jpg`, the map is generated at startup from the Earth procedural shader recipe; it is not live map imagery.
 - Left click or select a name in Mission Control: select a planet or the Sun and fly to it. Right mouse drag rotates the camera; the wheel zooms.
-- In free-fly, `W` / `A` / `S` / `D` move and `Shift` moves faster.
+- In free-fly, `W` / `A` / `S` / `D` move and `Left Shift` moves faster.
 - The right-side scientific instrument panel has a scrollable world table/data sheet, simulation controls, technique rows, sound control, and mission status. Technique rows stay synchronized with `G`, `L`, `I`, `M`, `N`, `P`, `Q`, and `K`. Expand **Controls** at the bottom for the key map. `F1` or `H` opens the same controls in a centered two-column table.
 - The start screen offers **Start Mission** and **Free Explore**. Mission visits and correct quiz answers earn points while the threat advances; quiz questions pause simulation time.
 
 The window can be resized and safely handles a minimized framebuffer. The splash credits and HUD use the same names in `UiTheme::kTeamMembers`. Inter supplies interface text; JetBrains Mono supplies measurements and readouts. Static TTF files are optional and use the SIL Open Font License. Font discovery is case-insensitive, variable fonts are rejected, and ImGui's size-matched default font is used with a warning when matching static files are unavailable. Fonts are rasterized at device pixel size and the atlas is rebuilt when display DPI changes; `FontGlobalScale` stays at 1.0. See `assets/fonts/README.txt` for file names and licence guidance.
+
+## Team and modules
+
+| Member | Module they present and can explain at the defence |
+|---|---|
+| Ernur | Gameplay, UI, camera, integration, Sun FBM shader, picking, quiz |
+| Renat | Renderer (HDR, bloom, Earth, rings, instancing) |
+| Azamat | Black hole (state machine, lensing, disk, Doppler) |
+
+## AI assistance
+
+Code was developed with OpenAI Codex under Ernur's direction, using prompts prepared with Claude. The team reviews AI-generated code; each member explains and can modify their shaders at the defence.
 
 ## Data and image provenance
 

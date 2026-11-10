@@ -162,6 +162,10 @@ private:
     float overviewDistance = 22;
     bool bloom = true;
     bool lensing = true;
+    bool lensingDemoPending = true;
+    bool lensingDemoActive = false;
+    bool lensingDemoReturning = false;
+    float lensingDemoElapsed = 0.0f;
     bool instancing = true;
     bool highQuality = true;
     bool meteorsEnabled = true;

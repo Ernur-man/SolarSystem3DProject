@@ -52,6 +52,7 @@ constexpr float kPanelWidthRatio = 0.288f;
 constexpr float kPanelMaxWidth = 380.0f;
 constexpr float kPanelMaxWindowFraction = 0.40f;
 constexpr float kPanelMinWidth = 300.0f;
+constexpr float kLensingDemoHoldSeconds = 7.0f;
 constexpr std::size_t ASTEROID_COUNT_HIGH = 4000;
 constexpr std::size_t ASTEROID_COUNT_LOW = 1800;
 // Three-radius clearances cross in this stylized system (8.0 > 6.95); use 1.5R margins.
@@ -860,6 +861,10 @@ void Application::shuffleDisplayedChoices() {
 }
 
 void Application::startMission(bool summonHole) {
+    lensingDemoPending = false;
+    lensingDemoActive = false;
+    lensingDemoReturning = false;
+    lensingDemoElapsed = 0.0f;
     resetGalaxyView();
     gameState = GameState::Mission;
     missionScore = 0;
@@ -1489,6 +1494,26 @@ void Application::input(float deltaTime) {
         lastLeftDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         return;
     }
+    if (lensingDemoPending && gameState == GameState::StartScreen) {
+        lensingDemoPending = false;
+        lensingDemoActive = true;
+        lensingDemoReturning = false;
+        lensingDemoElapsed = 0.0f;
+        blackHole.summon();
+    }
+    if (lensingDemoActive && gameState == GameState::StartScreen && !lensingDemoReturning) {
+        bool skipDemo = false;
+        for (int button = GLFW_MOUSE_BUTTON_1; button <= GLFW_MOUSE_BUTTON_LAST; ++button)
+            skipDemo = skipDemo || glfwGetMouseButton(window, button) == GLFW_PRESS;
+        for (int key = 0; !skipDemo && key <= GLFW_KEY_LAST; ++key)
+            skipDemo = glfwGetKey(window, key) == GLFW_PRESS;
+        if (skipDemo) {
+            blackHole.reset();
+            lensingDemoActive = false;
+            lensingDemoReturning = false;
+            lensingDemoElapsed = 0.0f;
+        }
+    }
     const bool escape = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
     if (escape && !lastEscapeDown) {
         selected = -1;
@@ -1772,6 +1797,20 @@ void Application::run() {
             blackHole.update(threatDeltaTime);
             if (blackHole.isSunSwallowed())
                 paused = true;
+        } else if (gameState == GameState::StartScreen && lensingDemoActive) {
+            blackHole.update(dt);
+            if (!lensingDemoReturning) {
+                lensingDemoElapsed += dt;
+                if (lensingDemoElapsed >= kLensingDemoHoldSeconds) {
+                    blackHole.returnBack();
+                    lensingDemoReturning = true;
+                }
+            }
+            if (lensingDemoReturning && blackHole.isIdle()) {
+                lensingDemoActive = false;
+                lensingDemoReturning = false;
+                lensingDemoElapsed = 0.0f;
+            }
         }
         updateGalaxy(dt, simulationDelta);
         if (selected >= 0 && bodyEffect(selected).swallowed) {
@@ -1932,6 +1971,12 @@ void Application::run() {
                       simTime / 86400.0f);
         hud->AddText(readoutFont, readoutSize, ImVec2(hudX, hudY + readoutSize + 4.0f * UiTheme::UiScale),
                      readoutColor, clockText);
+        if (lensingDemoActive) {
+            const ImU32 demoColor = ImGui::ColorConvertFloat4ToU32(UiTheme::Accent);
+            hud->AddText(readoutFont, readoutSize,
+                         ImVec2(hudX, hudY + 2.0f * (readoutSize + 4.0f * UiTheme::UiScale)),
+                         demoColor, "LENSING DEMO  |  ANY KEY TO SKIP");
+        }
         if (windowWidth >= 1100) {
             char cameraText[128], performanceText[80];
             std::snprintf(cameraText, sizeof(cameraText), "CAM  AZ %5.1f°  EL %4.1f°  DIST %4.1f",
