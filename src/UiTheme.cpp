@@ -6,6 +6,7 @@
 #include <cfloat>
 #include <cstdint>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -127,9 +128,11 @@ FontFiles discoverFonts() {
 ImFont *addFont(const std::filesystem::path &path, float logicalSize) {
     if (path.empty()) return nullptr;
     ImFontConfig config;
-    config.PixelSnapH = true;
-    config.OversampleH = 2;
-    config.OversampleV = 1; // Low vertical oversampling plus pixel snapping keeps small labels crisp.
+    static const ImWchar glyphRanges[] = {0x0020, 0x00FF, 0x2014, 0x2014, 0};
+    config.GlyphRanges = glyphRanges;
+    config.PixelSnapH = false;
+    config.OversampleH = 3;
+    config.OversampleV = 2;
     return ImGui::GetIO().Fonts->AddFontFromFileTTF(path.string().c_str(),
                                                      logicalSize * UiScale, &config);
 }
@@ -140,12 +143,32 @@ void buildFonts(GLFWwindow *window, bool replacing) {
     io.Fonts->Clear();
     io.FontGlobalScale = 1.0f;
     const FontFiles files = discoverFonts();
+#ifdef _WIN32
+    std::size_t windowsDirSize = 0;
+    char *windowsDir = nullptr;
+    _dupenv_s(&windowsDir, &windowsDirSize, "WINDIR");
+    const std::filesystem::path systemFonts = (windowsDir && *windowsDir)
+        ? std::filesystem::path(windowsDir) / "Fonts"
+        : std::filesystem::path("C:/Windows/Fonts");
+    std::free(windowsDir);
+    const std::filesystem::path systemInterface = systemFonts / "segoeui.ttf";
+    const std::filesystem::path systemReadout = systemFonts / "consola.ttf";
+    const auto existingOrEmpty = [](const std::filesystem::path &path) {
+        std::error_code error;
+        return std::filesystem::is_regular_file(path, error) ? path : std::filesystem::path{};
+    };
+    const std::filesystem::path interfaceFallback = existingOrEmpty(systemInterface);
+    const std::filesystem::path readoutFallback = existingOrEmpty(systemReadout);
+#else
+    const std::filesystem::path interfaceFallback;
+    const std::filesystem::path readoutFallback;
+#endif
     auto addDefault = [&](float logicalSize) {
         ImFontConfig config;
         config.SizePixels = logicalSize * UiScale;
-        config.PixelSnapH = true;
-        config.OversampleH = 2;
-        config.OversampleV = 1;
+        config.PixelSnapH = false;
+        config.OversampleH = 3;
+        config.OversampleV = 2;
         return io.Fonts->AddFontDefault(&config);
     };
     ImFont *fallback = addDefault(14.0f);
@@ -153,14 +176,26 @@ void buildFonts(GLFWwindow *window, bool replacing) {
     ImFont *titleFallback = addDefault(30.0f);
     ImFont *heroFallback = addDefault(22.0f);
     ImFont *introFallback = addDefault(60.0f);
-    ImFont *inter = addFont(files.interRegular, 14.0f);
-    ImFont *medium = addFont(files.interMedium, 11.0f);
-    ImFont *semibold = addFont(files.interSemiBold, 30.0f);
-    ImFont *mono = addFont(files.monoRegular, 14.0f);
-    ImFont *monoMedium = addFont(files.monoMedium, 14.0f);
-    ImFont *smallMono = addFont(files.monoMedium.empty() ? files.monoRegular : files.monoMedium, 11.0f);
-    ImFont *heroMono = addFont(files.monoMedium.empty() ? files.monoRegular : files.monoMedium, 22.0f);
-    ImFont *introInter = addFont(files.interSemiBold.empty() ? files.interRegular : files.interSemiBold, 60.0f);
+    const auto useOrSystem = [](const std::filesystem::path &preferred,
+                                const std::filesystem::path &system) {
+        return preferred.empty() ? system : preferred;
+    };
+    const std::filesystem::path regularInter = useOrSystem(files.interRegular, interfaceFallback);
+    const std::filesystem::path mediumInter = useOrSystem(
+        files.interMedium.empty() ? files.interRegular : files.interMedium, interfaceFallback);
+    const std::filesystem::path boldInter = useOrSystem(
+        files.interSemiBold.empty() ? files.interRegular : files.interSemiBold, interfaceFallback);
+    const std::filesystem::path regularMono = useOrSystem(files.monoRegular, readoutFallback);
+    const std::filesystem::path mediumMono = useOrSystem(
+        files.monoMedium.empty() ? files.monoRegular : files.monoMedium, readoutFallback);
+    ImFont *inter = addFont(regularInter, 14.0f);
+    ImFont *medium = addFont(mediumInter, 11.0f);
+    ImFont *semibold = addFont(boldInter, 30.0f);
+    ImFont *mono = addFont(regularMono, 14.0f);
+    ImFont *monoMedium = addFont(mediumMono, 14.0f);
+    ImFont *smallMono = addFont(mediumMono, 11.0f);
+    ImFont *heroMono = addFont(mediumMono, 22.0f);
+    ImFont *introInter = addFont(boldInter, 60.0f);
     BodyFont = inter ? inter : fallback;
     LabelFont = medium ? medium : (inter ? inter : labelFallback);
     TitleFont = semibold ? semibold : (inter ? inter : titleFallback);
@@ -168,23 +203,25 @@ void buildFonts(GLFWwindow *window, bool replacing) {
     SmallDataFont = smallMono ? smallMono : labelFallback;
     HeroFont = heroMono ? heroMono : heroFallback;
     IntroFont = introInter ? introInter : introFallback;
-    if (!replacing && (!inter || !mono)) {
-        if (files.foundVariable && !inter && !mono && !semibold && !medium && !monoMedium)
-            std::cerr << "Warning: only variable UI fonts were found; ImGui needs static TTF files. Using default font.\n";
-        else if (!inter && !mono && !semibold && !medium && !monoMedium)
-            std::cerr << "Warning: no matching static Inter or JetBrains Mono TTF found in assets/fonts; using default font.\n";
-        else
-            std::cerr << "Warning: a static Inter or JetBrains Mono TTF is missing; affected text uses the default font.\n";
-    }
-    auto report = [](const char *role, const std::filesystem::path &path, ImFont *font) {
-        if (!path.empty() && font) std::cout << "Loaded " << role << " font: " << path.string() << '\n';
-    };
     if (!replacing) {
-        report("Inter regular", files.interRegular, inter);
-        report("Inter medium", files.interMedium, medium);
-        report("Inter semibold", files.interSemiBold, semibold);
-        report("JetBrains Mono regular", files.monoRegular, mono);
-        report("JetBrains Mono medium", files.monoMedium, monoMedium);
+        const bool defaultUsed = !inter || !medium || !semibold || !mono || !monoMedium;
+        if (defaultUsed)
+            std::cerr << "Warning: one or more requested UI fonts were unavailable; using ImGui default for affected text.\n";
+        const auto nameFor = [&](const std::filesystem::path &path, ImFont *font) {
+            if (path.empty()) return "ImGui default";
+            if (!font) return "unavailable";
+            if (path == interfaceFallback) return "Segoe UI";
+            if (path == readoutFallback) return "Consolas";
+            if (path == files.interRegular || path == files.interMedium ||
+                path == files.interSemiBold) return "Inter";
+            return "JetBrains Mono";
+        };
+        std::cout << "UI fonts loaded: interface=" << nameFor(regularInter, inter)
+                  << ", labels=" << nameFor(mediumInter, medium)
+                  << ", title=" << nameFor(boldInter, semibold)
+                  << ", readouts=" << nameFor(mediumMono, monoMedium)
+                  << ", hero=" << nameFor(mediumMono, heroMono)
+                  << ", intro=" << nameFor(boldInter, introInter) << std::endl;
     }
     io.Fonts->Build();
     if (replacing && !ImGui_ImplOpenGL3_CreateFontsTexture())
@@ -200,9 +237,12 @@ void applyStyle() {
     style.WindowPadding = ImVec2(16.0f * UiScale, 16.0f * UiScale);
     style.FramePadding = ImVec2(8.0f * UiScale, 6.0f * UiScale);
     style.ItemSpacing = ImVec2(8.0f * UiScale, 8.0f * UiScale);
-    style.WindowRounding = style.ChildRounding = style.FrameRounding = 0.0f;
-    style.PopupRounding = style.ScrollbarRounding = style.GrabRounding = 0.0f;
-    style.WindowBorderSize = style.ChildBorderSize = 0.0f;
+    style.WindowRounding = 16.0f * UiScale;
+    style.ChildRounding = 12.0f * UiScale;
+    style.FrameRounding = 10.0f * UiScale;
+    style.PopupRounding = style.ScrollbarRounding = style.GrabRounding = 8.0f * UiScale;
+    style.WindowBorderSize = 1.0f * DpiScale;
+    style.ChildBorderSize = 0.0f;
     style.FrameBorderSize = 0.0f;
     style.ScrollbarSize = 6.0f * DpiScale;
     style.Colors[ImGuiCol_WindowBg] = Background;
@@ -335,7 +375,7 @@ bool PrimaryButton(const char *label, ImVec2 size) {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Accent);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, Accent);
     ImGui::PushStyleColor(ImGuiCol_Text, NearBlack);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f * UiScale);
     const bool clicked = ImGui::Button(label, ImVec2(size.x < 0 ? size.x : size.x * UiScale,
                                                       size.y * UiScale));
     ImGui::PopStyleVar();
@@ -352,7 +392,7 @@ bool GhostButton(const char *label, ImVec2 size) {
     ImGui::PushStyleColor(ImGuiCol_Text, Accent);
     ImGui::PushStyleColor(ImGuiCol_Border, Hairline);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f * UiScale);
     const bool clicked = ImGui::Button(label, ImVec2(size.x < 0 ? size.x : size.x * UiScale,
                                                       size.y * UiScale));
     ImGui::PopStyleVar(2);
