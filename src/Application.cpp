@@ -32,7 +32,6 @@
 #include <random>
 #include <regex>
 #include <sstream>
-#include <glm/gtc/type_ptr.hpp>
 
 namespace {
 constexpr float ORBIT_BASE_SECONDS = 120.0f;
