@@ -1587,6 +1587,7 @@ void Application::drawSky(const glm::mat4 &view, const glm::mat4 &projection) {
     skyShader.set("skyParallax", -galaxyDisplacement() * 0.0008f);
     skyShader.set("model", glm::scale(glm::mat4(1.0f), glm::vec3(90.0f)));
     skyShader.set("useTexture", skyTexture.isLoaded() ? 1 : 0);
+    skyShader.set("highQuality", highQuality ? 1 : 0);
     skyTexture.bind();
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
