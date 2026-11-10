@@ -30,6 +30,7 @@ World ambience is synthesized in C++ at startup, so the game needs no audio asse
 - `B`: summon or return the black hole; `R`: return it in Free Explore, restart Free Explore after the Sun is swallowed, or restart an active/finished mission; `F`: toggle free-fly; `[` / `]`: rotate the Sun light direction.
 - `Esc`: clear selection and smoothly return to the overview; `F12`: save a PNG in `screenshots/`.
 - Startup shows a 5.2-second scene intro once per launch; any key or mouse click skips it with a short fade. Pass `--no-intro` to start directly at the menu.
+- After the intro, the Start screen runs a 7-second automatic black-hole “LENSING DEMO” so gravitational lensing is visible within the first seconds; any key or mouse click skips the demo. Mission behaviour is unchanged.
 - `F1` or `H`: show or hide the complete controls overlay.
 - `K`: smoothly mute or unmute synthesized ambience. Mission Control has a master-volume slider.
 - `Y`: toggle the Solar System / Milky Way view in Free Explore while the black hole is idle.
@@ -79,7 +80,7 @@ Code was developed with OpenAI Codex under Ernur's direction, using prompts prep
 
 **Added (sound):** Synthesized 9.5-second stereo loops supply distinct world tones and filtered noise, plus deep-space ambience. Gains follow focus/proximity and body opacity, and the HUD provides volume and mute controls. See the Gameplay Notes equations for the synthesis and distance fade.
 
-**Done (interface):** the ImGui UI is a flat scientific instrument: square corners, hairline separators, aligned mono measurements, one amber accent and red reserved for danger or incorrect answers. Its 24%-width right dock is scrollable, with an overview table, selected-world datasheet, simulation controls, technique rows, audio control, mission status, and controls. Centered quiz, mission, ending, and help surfaces use matching hairlines and typography. `UiTheme::kUiTextScale` defaults to 1.2; font rasterization includes content DPI and the atlas rebuilds when that scale changes, while `FontGlobalScale` remains 1.0. Optional static Inter and JetBrains Mono fonts use the SIL Open Font License; case-insensitive discovery rejects variable TTFs and falls back to size-matched built-in fonts. See `assets/fonts/README.txt` for expected names and licence guidance. Course identity, score, and toggle states remain visible in the fixed panel header.
+**Done (interface):** the ImGui UI is a flat scientific instrument: square corners, hairline separators, aligned mono measurements, one amber accent and red reserved for danger or incorrect answers. Its scrollable right dock targets 28.8% of the window width and is capped at 380 px and 40% of the window width. It has an overview table, selected-world datasheet, simulation controls, technique rows, audio control, mission status, and controls. Centered quiz, mission, ending, and help surfaces use matching hairlines and typography. `UiTheme::kUiTextScale` defaults to 1.2; font rasterization includes content DPI and the atlas rebuilds when that scale changes, while `FontGlobalScale` remains 1.0. Optional static Inter and JetBrains Mono fonts use the SIL Open Font License; case-insensitive discovery rejects variable TTFs and falls back to size-matched built-in fonts. See `assets/fonts/README.txt` for expected names and licence guidance. Course identity, score, and toggle states remain visible in the fixed panel header.
 
 **Done (intro splash):** a 5.2-second, once-per-launch overlay reveals the live HDR, bloom, and tone-mapped scene from black, then fades the title, line, and shared team credit. It uses a frame-rate-independent smootherstep timeline, clamps frame delta, fades on any key or mouse click, and hides the window until the first completed frame has been swapped. `--no-intro` skips directly to the existing Start screen. Missing optional fonts warn and fall back to ImGui's default font.
 
@@ -90,3 +91,7 @@ Code was developed with OpenAI Codex under Ernur's direction, using prompts prep
 **Missing:** No requested renderer feature remains unimplemented. Optional Earth texture images are not included.
 
 Build uses CMake FetchContent and requires dependency sources at configure time. A successful clean-source verification is reported with the project handoff, not assumed from this README.
+
+## Offline / clean build notes
+
+Configuring a clean checkout requires internet: CMake FetchContent downloads GLFW, GLM, GLAD, Dear ImGui, and stb. By default, GLAD also downloads the Khronos `gl.xml` specification during build-time code generation. The running application requires no network connection.

@@ -15,7 +15,7 @@ FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TA
 FetchContent_Declare(glm GIT_REPOSITORY https://github.com/g-truc/glm.git GIT_TAG 1.0.1 GIT_SUBMODULES "" UPDATE_DISCONNECTED TRUE)
 FetchContent_Declare(glad GIT_REPOSITORY https://github.com/Dav1dde/glad.git GIT_TAG v0.1.36 GIT_SUBMODULES "" UPDATE_DISCONNECTED TRUE)
 FetchContent_Declare(imgui GIT_REPOSITORY https://github.com/ocornut/imgui.git GIT_TAG v1.91.8 GIT_SUBMODULES "" UPDATE_DISCONNECTED TRUE)
-FetchContent_Declare(stb GIT_REPOSITORY https://github.com/nothings/stb.git GIT_TAG master GIT_SUBMODULES "" UPDATE_DISCONNECTED TRUE)
+FetchContent_Declare(stb GIT_REPOSITORY https://github.com/nothings/stb.git GIT_TAG 4e9b368bfc071e97206ea5c6adba68dd0cbf8897 GIT_SUBMODULES "" UPDATE_DISCONNECTED TRUE)
 FetchContent_MakeAvailable(glfw glm glad)
 FetchContent_GetProperties(imgui)
 if(NOT imgui_POPULATED)
