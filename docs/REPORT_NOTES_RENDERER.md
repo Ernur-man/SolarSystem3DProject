@@ -105,7 +105,7 @@ tailAlpha = smoothstep(0, 0.26, v) * (1 - smoothstep(0.80, 1, v))
 
 Each meteor draws a head and camera-facing tapered tail with additive blending and depth writes disabled. The pass restores the prior blend/depth/program/VAO state. M toggles meteors; High draws 36 and Low draws 18. They render inside the HDR scene before lensing and bloom.
 
-Asteroids use a low-resolution sphere mesh. I switches between individual model draws and one instanced draw, and the HUD reports draw-call count. Counts are 4,000 High and 1,800 Low. Collision centers/radii come from the current BlackHole-adjusted body transforms. For distance `d` from a body with radius `R`:
+Asteroids use a low-resolution sphere mesh. I switches between individual model draws and one instanced draw. The draw-call count is maintained internally but is not displayed in the HUD or sidebar. Counts are 4,000 High and 1,800 Low. Collision centers/radii come from the current BlackHole-adjusted body transforms. For distance `d` from a body with radius `R`:
 
 ```text
 influence = 1.5 * R
