@@ -44,6 +44,10 @@ constexpr float kRingSpinSpeed = 6.2831853f / 25.0f;
 // Galactic drift in scene units per simulated second at 1x.
 constexpr float kGalaxySpeed = 0.34f;
 constexpr float kMilkyWayCameraYawDeg = -90.0f; // Negative means left; tune this live.
+constexpr float kSkyDepthParallax = 0.002f;
+constexpr float kSkyMaxParallax = 2.0f;
+constexpr double kNebulaDriftSpeed = 0.003;
+constexpr int kSkyDebugMode = 0;
 constexpr float kTrailSampleSeconds = 0.12f;
 constexpr std::size_t kTrailCapacity = 1200;
 constexpr float kLensingDemoHoldSeconds = 7.0f;
@@ -1584,10 +1588,23 @@ void Application::drawSky(const glm::mat4 &view, const glm::mat4 &projection) {
     skyShader.use();
     skyShader.set("view", glm::mat4(glm::mat3(view)));
     skyShader.set("projection", projection);
-    skyShader.set("skyParallax", -galaxyDisplacement() * 0.0008f);
     skyShader.set("model", glm::scale(glm::mat4(1.0f), glm::vec3(90.0f)));
     skyShader.set("useTexture", skyTexture.isLoaded() ? 1 : 0);
     skyShader.set("highQuality", highQuality ? 1 : 0);
+    skyShader.set("skyParallax", -galaxyDisplacement() * 0.0008f);
+    glm::vec3 cameraParallax = cameraPosition() * kSkyDepthParallax;
+    const float parallaxLength = glm::length(cameraParallax);
+    if (parallaxLength > kSkyMaxParallax)
+        cameraParallax *= kSkyMaxParallax / parallaxLength;
+    const double turn = 6.28318530717958647692;
+    const double phase = std::fmod(glfwGetTime() * kNebulaDriftSpeed, turn);
+    const glm::vec3 skyDrift(
+        static_cast<float>((std::cos(phase) - 1.0) * 0.24),
+        static_cast<float>(std::sin(phase) * 0.24),
+        static_cast<float>(std::sin(phase * 2.0) * 0.12));
+    skyShader.set("cameraParallax", cameraParallax);
+    skyShader.set("skyDrift", skyDrift);
+    skyShader.set("uSkyDebug", kSkyDebugMode);
     skyTexture.bind();
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);

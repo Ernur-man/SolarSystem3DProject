@@ -1,6 +1,6 @@
 # Event Horizon: Solar System Explorer
 
-A C++17 / OpenGL 3.3 Core university graphics project. The scene includes a procedural starfield and colourful direction-based nebula background, so no sky image asset is needed. An optional equirectangular sky texture can be placed at `assets/textures/stars_milky_way.jpg`.
+A C++17 / OpenGL 3.3 Core university graphics project. Without the optional `assets/textures/stars_milky_way.jpg` panorama, the sky uses a procedural, direction-based nebula with clumped gas, dust lanes, and layered depth; no image asset is required.
 
 ## Build and run (Windows 10/11, VS2022)
 
@@ -63,36 +63,53 @@ Code was developed with OpenAI Codex under Ernur's direction, using prompts prep
 
 ## Feature status
 
-**Done:** HDR rendering uses an RGBA16F scene target with depth, a documented fullscreen-pass hook, half-resolution bright-pass and separable Gaussian bloom, ACES tone mapping, exposure, and final sRGB conversion. `G` toggles bloom while retaining HDR and tone mapping. `Q` selects full-resolution HDR with eight blur iterations and high sphere detail, or 0.75-resolution HDR with four iterations and lower sphere detail. The existing lensing pass still consumes the HDR scene texture and sends its result through the bloom and tone-mapping composite. The gameplay/camera and black-hole modules are also implemented, including mission integration, event horizon, accretion disk, and body effects.
+**Team:** Yernur Amanturlly, Renat Rat, Azamat Ziadanov | **Group:** IT-2508
 
-**Done (planet surfaces, Earth, Moon, and Saturn):** Mercury, Venus, Mars, Jupiter, Saturn, Uranus, Neptune, and the Moon have optional sRGB color maps with mipmaps and extension-supported anisotropic filtering; short procedural fallbacks render when maps are absent. Earth's separate texture pipeline is unchanged. Earth has one rendered, tidally locked Moon with a 1/12-year stylized orbit and matching black-hole body effects. Saturn's 27-degree equatorial tilt is applied before its local-Y surface spin; its ring stays in the fixed tilted equatorial plane while angular dust/band patterns rotate at simulation time (about 25 simulated seconds per inner-edge revolution at 1x, slower outward). The reciprocal Saturn/ring analytic shadows remain on the fixed plane.
+**Legend:** DONE = implemented and built; code-verified = proven by code/build; visual pending = needs a visual check by the team; Optional = by design, not included.
 
-**Done (resize, meteors, asteroid belt):** Framebuffer changes resize the existing HDR/bloom and BlackHole lensing targets. ImGui uses logical window dimensions and picking maps logical cursor coordinates to framebuffer pixels. M toggles HDR-scene meteors (36 High / 18 Low). The belt has 4,000 High / 1,800 Low asteroids, I switches instanced/individual draws, and the HUD reports draw calls. The three-radius Mars/Jupiter margins cross in this stylized scale (8.0 > 6.95), so the user-selected available gap uses 1.5R clearances (7.55–8.225) and ±0.20 vertical spread. Asteroids keep planet repulsion and gain stateless black-hole pull, horizon fade, and HDR heat flashes; meteors use the same pure pull/fade behavior.
+### RENDERING
 
-**Done (Earth procedural fallback):** FBM generates connected landmasses, coastal water, latitude/height biomes, snow and ice. Ocean specular and land-masked city lights coexist with the optional textures; the separately rotating cloud shell and Fresnel atmosphere remain.
+1. **DONE — code-verified.** HDR pipeline (RGBA16F), bloom, Gaussian blur, ACES tone mapping, sRGB.
+2. **DONE — code-verified.** Bloom toggle (G), High/Low quality (Q).
+3. **DONE — code-verified; visual pending.** Gravitational lensing with L toggle and an automatic LENSING DEMO after the intro.
+4. **DONE — code-verified; visual pending.** Procedural Sun (FBM) and procedural surfaces for the 8 planets and Moon.
+5. **DONE — code-verified; visual pending.** Earth has procedural continents/biomes, clouds, atmosphere, city lights and ocean specular; the Moon is rendered.
+6. **DONE — code-verified; visual pending.** Saturn has tilted rings with mutual shadows.
+7. **DONE — code-verified; visual pending.** Asteroid belt with instancing (4,000 High / 1,800 Low), meteors (36 / 18), I and M toggles.
+8. **DONE — code-verified; visual pending.** Window resize and minimized-window handling.
 
-**Done (procedural planet fallback):** Mercury/Moon use cellular crater bowls and rims; Venus uses warped cloud bands; Mars adds rust regions and polar caps; Jupiter has turbulent bands and a Great Red Spot; Saturn has fine pale-gold bands; Uranus has faint cyan bands; Neptune has sparse blue streaks. UV patterns rotate with their sphere models. Both the Sun at the origin and the movable point light illuminate the surfaces.
+### GAMEPLAY
 
-**Done (black-hole gameplay):** The 90-second-at-1x threat can be returned along the same eased progress curve. Mission loss offers Restart and Back to menu; Free Explore offers a swallowed-Sun ending with Restart or Keep watching, and R restarts after swallowing. Asteroids and meteors follow the black hole without accumulated drift; asteroid-versus-planet repulsion remains active.
+9. **DONE — code-verified; visual pending.** Mission mode has score, a 60-point target, threat, win/loss and restart.
+10. **DONE — code-verified; visual pending.** Free Explore supports black-hole summon/return and a swallowed-Sun ending.
+11. **DONE — code-verified; visual pending.** Black hole has an event horizon, accretion disk with Doppler effect, and body/asteroid effects.
+12. **DONE — code-verified.** Quiz questions and answer options are randomized; answers change the threat speed.
+13. **DONE — code-verified; visual pending.** Milky Way view is available with Y and is a stylized visualization.
+14. **DONE — code-verified; visual pending.** Earth city map (P) with 50 offline cities and pins (N).
 
-**Done (Milky Way view):** Free Explore has a Solar System / Milky Way view toggle and Y shortcut while the black hole is Idle. Smooth simulation-time transitions render bounded, glowing camera-facing trails and a subtle starfield parallax; physics and picking remain Sun-centred. Trails pause with Space, scale with simulation speed, and clear on restart. This view is a stylized visualization.
+### INTERFACE AND AUDIO
 
-**Added (Milky Way camera):** The Milky Way overview applies `kMilkyWayCameraYawDeg = -90.0f` to the normal overview azimuth. Its two-second smoothstep transition uses the same direction blend as the mode and returns to Solar System orientation when the mode is turned off. Restart resets the angle to the normal overview. With the camera formula below, negative yaw rotates the horizontal camera offset toward the camera's prior left side.
+15. **DONE — code-verified; visual pending.** Navy/cyan collapsible sidebar with flyout panels and an always-visible HUD showing team, mode, score and G/L/I/M/N/P/Q states. The HUD does not display K or asteroid draw-call count.
+16. **DONE — code-verified.** Keyboard and mouse controls: Space pause; 1/2/3 speed; G bloom; L lensing; I instancing; M meteors; Q quality; B black-hole summon/return; R return/restart; F free-fly; [ / ] light rotation; Esc clear selection/return overview; F12 screenshot; Tab collapse sidebar; F1/H help; K mute; Y Milky Way; N pins; P Earth map; WASD move; Left Shift faster; left click selects; right drag orbits; wheel zooms.
+17. **DONE — code-verified; visual pending.** Intro splash (5.2 s, skippable), help overlay (F1/H), screenshots (F12).
+18. **DONE — code-verified; visual pending.** Synthesized audio, volume slider and mute (K); no audio files are required for generated ambience. Audio output depends on build/runtime audio support.
 
-**Added (sound):** Synthesized 9.5-second stereo loops supply distinct world tones and filtered noise, plus deep-space ambience. Gains follow focus/proximity and body opacity, and the HUD provides volume and mute controls. See the Gameplay Notes equations for the synthesis and distance fade.
+### OPTIONAL (by design, not included)
 
-**Done (interface):** the ImGui UI uses a rounded dark-navy right sidebar with a cyan active pill, primitive-drawn icons, and a Tab collapse shortcut. The expanded rail targets 150 logical pixels and the collapsed rail 56; a selected item opens a scrollable 320-logical-pixel flyout to its left, clamped to preserve at least 45% of the window width for the scene at 1280x720. The flyout reuses the overview/world datasheet and quiz, simulation, instrument and sound controls, mission status/start/restart, and the controls list. A rounded top-left HUD always shows the topic, team, mode/score, and G/L/I/M/N/P/Q states; three round quick buttons toggle bloom, lensing, and mute. Centered start, quiz, mission result, ending, and help cards use the same navy/cyan theme. `UiTheme::kUiTextScale` defaults to 1.2; font rasterization includes content DPI and the atlas rebuilds when that scale changes, while `FontGlobalScale` remains 1.0. Optional static Inter and JetBrains Mono fonts use the SIL Open Font License; case-insensitive discovery rejects variable TTFs and falls back to size-matched built-in fonts. See `assets/fonts/README.txt` for expected names and licence guidance. Visual layout needs a manual check by Ernur.
+19. **OPTIONAL — code-verified.** External planet and Earth texture images are optional; procedural fallbacks are used when image files are absent.
 
-**Done (intro splash):** a 5.2-second, once-per-launch overlay reveals the live HDR, bloom, and tone-mapped scene from black, then fades the title, line, and shared team credit. It uses a frame-rate-independent smootherstep timeline, clamps frame delta, fades on any key or mouse click, and hides the window until the first completed frame has been swapped. `--no-intro` skips directly to the existing Start screen. Missing optional fonts warn and fall back to ImGui's default font.
+### DRAW-CALL COUNTER
 
-**Done (quiz randomization):** each world uses a Fisher–Yates question bag so questions are used once before the bag refills, with the previous question kept off the next bag's first slot. Answer options reshuffle by their answer text identity for each display. `kQuizFixedSeed` is in `src/QuizRandomizer.h`: zero uses `std::random_device` with a clock fallback; a nonzero value gives a repeatable seed sequence. Mission and quiz starts print the seed.
+20. **DONE — code-verified.** The asteroid draw-call counter is not shown to the user. It is updated internally, but the HUD and sidebar do not read it; there is no place in either default or expanded sidebar where the count can be found.
 
-**Partial:** Visual checks for resizing/DPI, Earth, quiz/Q, lensing (B/L), and numeric performance across instanced/non-instanced consuming modes remain to be done. The old timer threat remains as a marked fallback; scene scales and black-hole effects are illustrative rather than physically simulated.
+### SUBMISSION STATUS (separate from features)
 
-**Missing:** No requested renderer feature remains unimplemented. Optional Earth texture images are not included.
+- Clean build from a fresh clone: **NOT VERIFIED**
+- FPS table (bloom, quality, instancing, lensing on/off): **TODO**
+- Report and 60-120 s video: **TODO**
+- Topic-specific must-implement list (Section 6): **TODO, needs the topic sheet**
 
-Build uses CMake FetchContent and requires dependency sources at configure time. A successful clean-source verification is reported with the project handoff, not assumed from this README.
-
+For exact source evidence, texture/font discovery notes, and audit references, see [docs/FEATURE_STATUS.md](docs/FEATURE_STATUS.md).
 ## Offline / clean build notes
 
 Configuring a clean checkout requires internet: CMake FetchContent downloads GLFW, GLM, GLAD, Dear ImGui, and stb. By default, GLAD also downloads the Khronos `gl.xml` specification during build-time code generation. The running application requires no network connection.
